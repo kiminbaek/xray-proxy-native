@@ -46,7 +46,11 @@
 - **Token 鉴权**：内置 auth.js，首次启动生成
 - **加密压缩导入导出**：AES-256-GCM + PBKDF2-SHA256(100k) + gzip
 - **崩溃守护**：进程异常 5s 自动重启
-- **命令行代理工具**：`with-proxy` 包裹器（LD_PRELOAD 注入，不动系统，100% 可回滚）
+- **命令行代理工具 with-proxy**：LD_PRELOAD 注入 `libproxychains4.so` 的进程级代理包裹器
+  - **不动系统**：不修改 `LD_LIBRARY_PATH` / `/etc/ld.so.conf` / 任何环境变量，100% 用户态
+  - **100% 可回滚**：删除 `bin/` 目录即可完全恢复（无系统级副作用）
+  - **用法**：`with-proxy curl https://www.google.com` / `with-proxy ./deploy.sh` / `with-proxy npm install`
+  - **详见**下方 [使用说明](#使用说明) 段的 `with-proxy` 章节
 
 ---
 
