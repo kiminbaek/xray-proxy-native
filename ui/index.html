@@ -1,0 +1,2292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xray-proxy-native · 代理管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a73e8,#1557b0);color:#fff;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.header h1{font-size:22px;font-weight:600}
+.header .sub{font-size:13px;opacity:.85;margin-top:4px}
+.status-badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:500}
+.status-badge.running{background:#34a853;color:#fff}
+.status-badge.stopped{background:#ea4335;color:#fff}
+.status-badge.starting{background:#fbbc04;color:#333}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.stat-card .label{font-size:13px;color:#666;margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700;color:#1a73e8}
+.stat-card .value.green{color:#34a853}
+.stat-card .value.red{color:#ea4335}
+.stat-card .value.yellow{color:#fbbc04}
+.actions{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap}
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-primary{background:#1a73e8;color:#fff}
+.btn-primary:hover{background:#1557b0}
+.btn-danger{background:#ea4335;color:#fff}
+.btn-danger:hover{background:#c5221f}
+.group-badge{display:inline-block;padding:2px 8px;border-radius:10px;background:var(--tag-bg);color:var(--tag-text);font-size:11px;font-weight:500}
+.tag-cell{font-size:11px;color:var(--text-secondary);font-family:monospace;opacity:.7}
+.latency-good{color:#28a745;font-weight:600}
+.latency-mid{color:#f59e0b;font-weight:600}
+.latency-bad{color:#dc3545;font-weight:600}
+.latency-fail{color:#888;font-style:italic}
+[data-theme="dark"] .latency-good{color:#4ade80}
+[data-theme="dark"] .latency-mid{color:#fbbf24}
+[data-theme="dark"] .latency-bad{color:#f87171}
+.health-cell{font-size:14px;display:inline-block;min-width:24px;text-align:center}
+.health-ok{color:#28a745}
+.health-warn{color:#f59e0b}
+.health-bad{color:#dc3545}
+.toast{background:rgba(0,0,0,.85);color:#fff;padding:12px 20px;border-radius:8px;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,.2);transition:opacity .3s,transform .3s}
+[data-theme="dark"] .toast{background:rgba(255,255,255,.95);color:#222}
+.btn-success{background:#34a853;color:#fff}
+.btn-outline{background:#fff;color:#333;border:1px solid #ddd}
+.btn-sm{padding:6px 12px;font-size:12px}
+.section{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px;overflow:hidden}
+.section-header{padding:16px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.section-header h2{font-size:16px;font-weight:600}
+.section-body{padding:20px}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 12px;text-align:left;font-size:12px;color:#888;font-weight:600;border-bottom:2px solid #eee;background:#fafbfc}
+td{padding:12px;border-bottom:1px solid #f0f0f0;font-size:14px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8f9ff}
+tr.disabled td{opacity:.5;background:#fafafa}
+tr.dragging{opacity:.4}
+tr.drop-target td{border-top:2px solid #1a73e8}
+.drag-handle{cursor:grab;color:#ccc;font-size:18px;user-select:none}
+.drag-handle:hover{color:#1a73e8}
+.drag-handle:active{cursor:grabbing}
+.tag-cell{font-family:'SF Mono',Menlo,monospace;font-size:12px;color:#666}
+.proto-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#e8f0fe;color:#1a73e8}
+.proto-badge.vmess{background:#fef3e0;color:#e37400}
+.proto-badge.trojan{background:#fce8e6;color:#c5221f}
+.proto-badge.shadowsocks{background:#e6f4ea;color:#137333}
+.toggle-switch{position:relative;display:inline-block;width:36px;height:20px;cursor:pointer}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;top:0;left:0;right:0;bottom:0;background:#ccc;border-radius:20px;transition:.2s}
+.toggle-slider:before{content:"";position:absolute;height:16px;width:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.toggle-switch input:checked + .toggle-slider{background:#34a853}
+.toggle-switch input:checked + .toggle-slider:before{transform:translateX(16px)}
+.empty-state{text-align:center;padding:40px;color:#999}
+.empty-state p{margin-top:8px;font-size:14px}
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:1000;align-items:center;justify-content:center}
+.modal.active{display:flex}
+.modal-content{background:#fff;border-radius:16px;padding:24px;width:90%;max-width:720px;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.modal-content h3{font-size:18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
+.tabs{display:flex;border-bottom:2px solid #eee;margin-bottom:16px;gap:4px}
+.tab{padding:10px 20px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;font-size:14px;color:#666}
+.tab.active{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:600}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;font-weight:500;color:#555;margin-bottom:4px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit}
+.form-group textarea{min-height:100px;font-family:'SF Mono',Menlo,monospace;font-size:12px;resize:vertical}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:#1a73e8;box-shadow:0 0 0 2px rgba(26,115,232,.2)}
+.form-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-hint{font-size:12px;color:#999;margin-top:4px}
+.toast{visibility:hidden;min-width:250px;max-width:80%;background:#333;color:#fff;text-align:center;border-radius:8px;padding:12px 20px;position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:2000;font-size:14px;opacity:0;transition:opacity .3s;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.toast.show{visibility:visible;opacity:1}
+.toast.success{background:#34a853}
+.toast.error{background:#ea4335}
+.toast.warning{background:#fbbc04;color:#333}
+.log-box{background:#1e1e1e;color:#ccc;padding:16px;border-radius:8px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.log-toolbar{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.log-toolbar select{padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px}
+
+/* ====== 系统节点保护样式 ====== */
+.system-node{background:linear-gradient(90deg,#f8f9ff 0%,transparent 100%)}
+.system-node:hover{background:linear-gradient(90deg,#eef0ff 0%,transparent 100%)}
+.lock-badge{display:inline-block;font-size:11px;background:#fff3cd;color:#856404;padding:1px 6px;border-radius:4px;margin-left:4px;vertical-align:middle}
+.btn.disabled,.btn:disabled{opacity:0.4;cursor:not-allowed;pointer-events:none}
+
+/* ====== 手机界面适配 ====== */
+/* 手机（默认折叠次要面板，浮动测速按钮）*/
+@media(max-width:768px){
+  .form-row{grid-template-columns:1fr}
+  .header{padding:16px}
+  .header h1{font-size:18px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat-card{padding:12px}
+  .stat-card .label{font-size:11px}
+  .stat-card .value{font-size:20px}
+  /* 表格：手机端简化为只显示备注+协议+地址+操作 */
+  .container{padding:12px}
+  .section{padding:12px;margin-bottom:12px}
+  .section h2{font-size:16px;margin-bottom:12px}
+  table{font-size:13px}
+  table th,table td{padding:8px 4px}
+  table th:nth-child(3),table td:nth-child(3),
+  table th:nth-child(5),table td:nth-child(5),
+  table th:nth-child(6),table td:nth-child(6),
+  table th:nth-child(8),table td:nth-child(8),
+  table th:nth-child(9),table td:nth-child(9){display:none}
+  /* 操作按钮在手机上更大 */
+  .btn{padding:10px 14px;font-size:14px}
+  .btn-sm{padding:8px 10px;font-size:13px}
+  /* 浮动测速按钮 */
+  .fab-test{position:fixed;right:18px;bottom:24px;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;box-shadow:0 4px 12px rgba(0,0,0,.25);font-size:24px;z-index:100;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .fab-test:active{transform:scale(0.95)}
+  /* 面板折叠 */
+  .section.collapsible.collapsed .section-body{display:none}
+  .section.collapsible .section-header{cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+  .section.collapsible .collapse-icon{transition:transform .2s;display:inline-block;margin-left:8px}
+  .section.collapsible.collapsed .collapse-icon{transform:rotate(-90deg)}
+  /* 节点列表底部留出空间给浮动按钮 */
+  .node-list-wrap{padding-bottom:80px}
+  /* 表格行变小 */
+  .proto-badge{font-size:10px;padding:2px 6px}
+  /* 日志框更紧凑 */
+  .log-box{font-size:11px;max-height:200px;padding:12px}
+  /* 表单：modal 撑满 */
+  .modal-content{width:92%;max-width:92%;margin:8% auto;padding:18px}
+  .modal-content h2{font-size:18px}
+}
+/* 桌面：显示完整列，浮动按钮隐藏 */
+@media(min-width:769px){
+  .fab-test{display:none}
+  .section.collapsible .collapse-icon{display:none}
+}
+/* 平板：也走桌面布局 */
+@media(min-width:769px) and (max-width:1024px){
+  .stats{grid-template-columns:repeat(3,1fr)}
+  table{font-size:14px}
+}
+
+/* ====== 暗色模式（CSS 变量 + 3 态切换） ====== */
+:root{
+  --bg-primary:#f5f7fa;--bg-card:#fff;--text-primary:#222;--text-secondary:#666;--border:#e0e6ed;--accent:#667eea;--accent-2:#764ba2;--shadow:rgba(0,0,0,.06);
+  --primary:#1a73e8;--input-bg:#fff;--tag-bg:#e8f0fe;--tag-text:#1967d2;--table-stripe:#fafbfc;--log-bg:#1e1e1e;--log-text:#d4d4d4;
+  --badge-success-bg:#d4edda;--badge-success-text:#155724;--badge-warn-bg:#fff3cd;--badge-warn-text:#856404;--badge-error-bg:#f8d7da;--badge-error-text:#721c24;
+}
+[data-theme="dark"]{
+  --bg-primary:#1a1d23;--bg-card:#252932;--text-primary:#e8e8e8;--text-secondary:#aaa;--border:#3a3f4b;--accent:#7c8fff;--accent-2:#a07fff;--shadow:rgba(0,0,0,.3);
+  --primary:#4a90e2;--input-bg:#2a2e36;--tag-bg:#2c3a5a;--tag-text:#a8c5ff;--table-stripe:#22262e;--log-bg:#0a0a0a;--log-text:#d4d4d4;
+  --badge-success-bg:#1e4620;--badge-success-text:#a3d9a5;--badge-warn-bg:#4d3c00;--badge-warn-text:#ffd966;--badge-error-bg:#4c1f1f;--badge-error-text:#f5a5a5;
+}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg-primary:#1a1d23;--bg-card:#252932;--text-primary:#e8e8e8;--text-secondary:#aaa;--border:#3a3f4b;--accent:#7c8fff;--accent-2:#a07fff;--shadow:rgba(0,0,0,.3);
+    --primary:#4a90e2;--input-bg:#2a2e36;--tag-bg:#2c3a5a;--tag-text:#a8c5ff;--table-stripe:#22262e;--log-bg:#0a0a0a;--log-text:#d4d4d4;
+    --badge-success-bg:#1e4620;--badge-success-text:#a3d9a5;--badge-warn-bg:#4d3c00;--badge-warn-text:#ffd966;--badge-error-bg:#4c1f1f;--badge-error-text:#f5a5a5;
+  }
+}
+body{background:var(--bg-primary);color:var(--text-primary);transition:background .2s,color .2s}
+.card,.section,.stat-card,.modal-content,.form-card{background:var(--bg-card);color:var(--text-primary);border-color:var(--border);box-shadow:0 1px 3px var(--shadow)}
+input,select,textarea{background:var(--input-bg);color:var(--text-primary);border-color:var(--border)}
+table tbody tr:nth-child(even){background:var(--table-stripe)}
+table tbody tr:hover{background:var(--tag-bg)}
+[data-theme="dark"] .log-box,[data-theme="dark"] .log-viewer{background:var(--log-bg);color:var(--log-text)}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .log-box,:root:not([data-theme="light"]) .log-viewer{background:var(--log-bg);color:var(--log-text)}
+}
+.status-badge.running{background:var(--badge-success-bg);color:var(--badge-success-text)}
+.status-badge.stopped{background:var(--badge-error-bg);color:var(--badge-error-text)}
+.status-badge.starting{background:var(--badge-warn-bg);color:var(--badge-warn-text)}
+.theme-toggle{position:fixed;right:18px;top:18px;width:36px;height:36px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);font-size:16px;cursor:pointer;z-index:101;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px var(--shadow)}
+.theme-toggle:active{transform:scale(0.95)}
+[draggable=true]{-webkit-user-drag:element}
+</style>
+</head>
+<body>
+<!-- 登录页（首次访问/Token 失效时显示） -->
+<div id="login-page" style="display:none;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a73e8,#1557b0)">
+  <div style="background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);max-width:480px;width:90%">
+    <h2 style="margin:0 0 8px;color:#1a73e8">🔐 xray-proxy-native</h2>
+    <p style="color:#666;margin-bottom:24px;font-size:14px;line-height:1.6">轻量级 xray 代理管理面板 · Token 鉴权登录<br>首次访问请从应用启动日志 <code>info.log</code> 复制 Token。</p>
+    <div style="background:#f5f5f5;padding:12px;border-radius:6px;font-size:12px;color:#666;margin-bottom:16px;font-family:monospace;word-break:break-all" id="auth-hint">Token 路径：<span id="auth-hint-path">-</span></div>
+    <input type="text" id="login-token" placeholder="粘贴 32 字符 Token" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:monospace;font-size:14px;margin-bottom:6px;box-sizing:border-box" autocomplete="off" spellcheck="false" oninput="updateLoginBtnState()">
+    <div id="login-counter" style="font-size:12px;color:#999;margin-bottom:12px;text-align:right">0/32 字符</div>
+    <button id="login-btn" style="width:100%;padding:12px;background:#9e9e9e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed" disabled>登录</button>
+    <div id="login-error" style="color:#ea4335;margin-top:12px;font-size:13px;text-align:center;min-height:18px"></div>
+  </div>
+</div>
+
+<!-- 主界面（登录后显示） -->
+<div id="main-page" style="display:none">
+<div class="header">
+  <div>
+    <h1>🌐 xray-proxy-native</h1>
+    <div class="sub" id="systemInfo">轻量级 xray 代理管理 · 一键配置 · 手机 / 桌面双端适配</div>
+  </div>
+  <div id="headerStatus"><span class="status-badge stopped">检测中...</span></div>
+</div>
+<div class="container">
+  <div class="stats">
+    <div class="stat-card"><div class="label">运行状态</div><div class="value" id="statStatus">检测中</div></div>
+    <div class="stat-card"><div class="label">节点数 (启用/总数)</div><div class="value" id="statNodes">-</div></div>
+    <div class="stat-card"><div class="label">xray 路径</div><div class="value" style="font-size:13px;font-weight:400" id="statBinary">检测中...</div></div>
+    <div class="stat-card"><div class="label">本地代理端口</div><div class="value" style="font-size:14px;font-weight:400" id="statPorts">SOCKS 10808<br>HTTP 10809</div></div>
+    <div class="stat-card">
+      <div class="label">崩溃自动重启</div>
+      <div class="value green" id="statAutoRestart" style="font-size:16px">开启中</div>
+      <div style="font-size:12px;color:#666;margin-top:6px" id="statAutoRestartInfo">5s 延迟 · 1h 上限 3 次</div>
+      <button class="btn btn-outline" id="btnToggleAutoRestart" onclick="toggleAutoRestart()" style="margin-top:10px;width:100%;font-size:13px">关闭守护</button>
+    </div>
+    <div class="stat-card">
+      <div class="label">总流量</div>
+      <div class="value" style="font-size:14px;font-weight:400" id="statTraffic">↓ 0 B<br>↑ 0 B</div>
+      <div style="font-size:11px;color:#888;margin-top:6px" id="statTrafficInfo">xray stats API</div>
+      <div style="font-size:11px;color:#5b8def;margin-top:4px" id="statInbound" title="用户实际消费流量（入站 = 上传+下载）">📥 入站: -</div>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-success" id="btnStart" onclick="proxyAction('start')">▶ 启动</button>
+    <button class="btn btn-danger" id="btnStop" onclick="proxyAction('stop')">■ 停止</button>
+    <button class="btn btn-outline" onclick="proxyAction('restart')">↻ 重启</button>
+    <button class="btn btn-primary" onclick="openAddModal()">＋ 添加节点</button>
+    <button class="btn btn-outline" onclick="openImportModal()">📋 导入链接</button>
+    <button class="btn btn-outline" onclick="openSettingsModal()">⚙️ 设置</button>
+    <button class="btn btn-outline" onclick="showTutorial()" title="首次使用？看这里">📖 使用教程</button>
+  </div>
+  <div class="section collapsible collapsed">
+    <div class="section-header">
+      <h2>📡 出站节点 <span style="color:#999;font-weight:400;font-size:13px">（拖拽排序）</span> <span class="collapse-icon">▼</span></h2>
+      <div>
+        <button class="btn btn-primary btn-sm" onclick="openAddModal()">＋ 添加</button>
+        <button class="btn btn-outline btn-sm" onclick="loadConfig()">⟳ 刷新</button>
+      </div>
+    </div>
+    <!-- 搜索 / 过滤工具栏 -->
+    <div class="section-body" style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="nodeSearch" type="search" placeholder="🔍 搜索 备注 / 标签 / 地址…" oninput="applyNodeFilter()" style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg);color:var(--text-primary)">
+      <select id="filterProtocol" onchange="applyNodeFilter()" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg);color:var(--text-primary)">
+        <option value="">全部协议</option>
+        <option value="vless">VLESS</option>
+        <option value="vmess">VMess</option>
+        <option value="trojan">Trojan</option>
+        <option value="shadowsocks">SS</option>
+      </select>
+      <select id="filterGroup" onchange="applyNodeFilter()" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg);color:var(--text-primary)">
+        <option value="">全部分组</option>
+      </select>
+      <select id="filterStatus" onchange="applyNodeFilter()" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg);color:var(--text-primary)">
+        <option value="">全部状态</option>
+        <option value="enabled">已启用</option>
+        <option value="disabled">已禁用</option>
+      </select>
+      <span id="nodeFilterCount" style="font-size:12px;color:var(--text-secondary);margin-left:auto"></span>
+    </div>
+    <!-- 批量操作工具栏 -->
+    <div id="batchToolbar" class="section-body" style="padding:8px 20px;border-bottom:1px solid var(--border);display:none;gap:8px;flex-wrap:wrap;align-items:center;background:var(--tag-bg)">
+      <span style="font-size:13px;font-weight:600">已选 <span id="batchCount">0</span> 个：</span>
+      <button class="btn btn-outline btn-sm" onclick="batchAction('enable')">✅ 启用</button>
+      <button class="btn btn-outline btn-sm" onclick="batchAction('disable')">⛔ 禁用</button>
+      <button class="btn btn-outline btn-sm" onclick="batchSetGroup()">🏷 改分组</button>
+      <button class="btn btn-danger btn-sm" onclick="batchAction('delete')">🗑 删除</button>
+      <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="clearBatchSelection()">✕ 取消选择</button>
+    </div>
+    <!-- v1.13.0+ 全部测速 + 自动切换最优 -->
+    <div class="section-body" style="padding:8px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap;align-items:center;background:var(--card-bg)">
+      <button class="btn btn-outline btn-sm" id="testAllBtn" onclick="testAllNodes()">⚡ 全部测速</button>
+      <span style="font-size:12px;color:var(--text-secondary)">当前最优：<strong id="optimalNode" style="color:var(--text-primary)">-</strong><span id="optimalAvg" style="margin-left:6px;color:var(--text-secondary)"></span></span>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;margin-left:auto" title="连续 3 次健康检查候选最优才切换（防抖动）">
+        <input type="checkbox" id="autoSelectEnabled" onchange="toggleAutoSelect(this.checked)">
+        🤖 自动切换最优
+      </label>
+      <button class="btn btn-outline btn-sm" id="switchNowBtn" onclick="switchToOptimalNow()" title="不走抖动保护，立即切到当前最优">🎯 立即切最优</button>
+    </div>
+    <div class="section-body" id="nodeList">
+      <div class="empty-state">⏳ 加载中...</div>
+    </div>
+  </div>
+  <!-- 流量图表 v1.10.0+ -->
+  <div class="section">
+    <div class="section-header">
+      <h2>📊 流量趋势 <span style="color:#999;font-weight:400;font-size:13px">（近 24 小时）</span> <span class="collapse-icon">▼</span></h2>
+      <div>
+        <button class="btn btn-outline btn-sm" onclick="loadTrafficChart()">⟳ 刷新</button>
+      </div>
+    </div>
+    <div class="section-body" style="padding:16px 20px">
+      <div style="position:relative;height:220px">
+        <canvas id="trafficChart"></canvas>
+      </div>
+      <div id="trafficChartHint" style="text-align:center;color:var(--text-secondary);font-size:12px;margin-top:8px">每小时一个数据点</div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-header">
+      <h2>📋 运行日志</h2>
+      <div class="log-toolbar">
+        <select id="logLines" onchange="loadLogs()">
+          <option value="50">最近 50 行</option>
+          <option value="100">最近 100 行</option>
+          <option value="200" selected>最近 200 行</option>
+          <option value="500">最近 500 行</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadLogs()">⟳ 刷新</button>
+        <button class="btn btn-outline btn-sm" onclick="rotateLogs()">🗑 轮转</button>
+        <label class="toggle-switch" title="实时推送"><input type="checkbox" id="autoRefreshLog" checked onchange="startLogSSE()"><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+    <div class="section-body"><div class="log-box" id="logBox">(暂无日志)</div></div>
+  </div>
+</div>
+
+<div class="modal" id="nodeModal">
+  <div class="modal-content">
+    <h3><span id="modalTitle">添加节点</span><button class="btn btn-outline btn-sm" onclick="closeModal()">✕</button></h3>
+    <div class="tabs">
+      <div class="tab active" data-tab="form" onclick="switchTab('form')">表单</div>
+      <div class="tab" data-tab="json" onclick="switchTab('json')">JSON</div>
+    </div>
+    <div class="tab-content active" id="tab-form">
+      <div class="form-row">
+        <div class="form-group"><label>协议</label><select id="fProtocol" onchange="updateFormByProtocol()"><option value="vless">VLESS</option><option value="vmess">VMess</option><option value="trojan">Trojan</option><option value="shadowsocks">Shadowsocks</option></select></div>
+        <div class="form-group"><label>传输</label><select id="fNetwork" onchange="updateFormByNetwork()"><option value="tcp">TCP</option><option value="ws" selected>WebSocket</option><option value="grpc">gRPC</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>备注名</label><input id="fRemark" placeholder="例如：美国VPS"></div>
+        <div class="form-group"><label>分组</label><input id="fGroup" list="groupOptions" placeholder="如：家庭/公司/备用"><datalist id="groupOptions"><option value="家庭"><option value="公司"><option value="备用"><option value="机场A"><option value="机场B"></datalist></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>地址</label><input id="fAddress" placeholder="服务器地址或域名"></div>
+        <div class="form-group"><label>端口</label><input id="fPort" placeholder="443" type="number"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label id="fIdLabel">UUID</label><input id="fId" placeholder="UUID / 密码"></div>
+        <div class="form-group"><label id="fEncLabel">加密</label><select id="fEncryption"><option value="none">none</option><option value="auto">auto</option><option value="aes-128-gcm">aes-128-gcm</option><option value="chacha20-poly1305">chacha20-poly1305</option><option value="aes-256-gcm">aes-256-gcm</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option><option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option></select></div>
+      </div>
+      <div class="form-group" id="fWsGroup"><label>WebSocket 路径</label><input id="fWsPath" placeholder="/v2rayws"></div>
+      <div class="form-group" id="fGrpcGroup" style="display:none"><label>gRPC ServiceName</label><input id="fGrpcService" placeholder="grpc服务名"></div>
+      <div class="form-row">
+        <div class="form-group"><label>TLS</label><select id="fTls" onchange="updateTlsFields()"><option value="none">无</option><option value="tls" selected>TLS</option><option value="reality">REALITY</option></select></div>
+        <div class="form-group" id="fSniGroup"><label>SNI</label><input id="fSni" placeholder="example.com"></div>
+      </div>
+    </div>
+    <div class="tab-content" id="tab-json">
+      <div class="form-group"><label>完整 JSON 节点配置</label><textarea id="fCustomJson" placeholder='{"tag": "...", "protocol": "vless", ...}'></textarea><div class="form-hint">填写完整的 outbound JSON，会覆盖表单内容</div></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveNode()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="importModal">
+  <div class="modal-content">
+    <h3><span>导入分享链接</span><button class="btn btn-outline btn-sm" onclick="closeImportModal()">✕</button></h3>
+    <div class="form-group"><label>分享链接 (支持 vless:// / vmess:// / trojan:// / ss://)</label><textarea id="fImportLink" placeholder="粘贴 vless://... 或 vmess://... 链接" style="min-height:120px"></textarea><div class="form-hint">支持 vless/vmess/ss/trojan 链接（每行一个）或 v2rayN base64 订阅内容（自动识别解码）</div></div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeImportModal()">取消</button>
+      <button class="btn btn-primary" onclick="importLink()">导入</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="settingsModal">
+  <div class="modal-content">
+    <h3><span>设置</span><button class="btn btn-outline btn-sm" onclick="closeSettingsModal()">✕</button></h3>
+    <div class="form-group"><label>xray 可执行文件路径</label><div style="display:flex;gap:8px"><input id="fXrayPath" placeholder="/usr/local/bin/xray"><button class="btn btn-primary" onclick="detectXray()">检测</button></div><div class="form-hint" id="fXrayHint"></div></div>
+    <div class="form-group"><label>本地 SOCKS 端口</label><input id="fSocksPort" type="number" value="10808"></div>
+    <div class="form-group"><label>本地 HTTP 端口</label><input id="fHttpPort" type="number" value="10809"></div>
+    <!-- 配置备份 / 迁移 -->
+    <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
+      <label>配置备份 / 迁移</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="exportConfig()">📥 导出配置</button>
+        <button class="btn btn-outline" onclick="document.getElementById('importFile').click()">📤 导入配置</button>
+        <input type="file" id="importFile" accept=".json" style="display:none" onchange="importConfig(event)">
+        <button class="btn btn-danger" onclick="resetConfig()">🗑 重置配置</button>
+      </div>
+      <div class="form-hint">导出含 config + auth + traffic；导入会备份当前配置为 .import-bak</div>
+    </div>
+    <!-- with-proxy 使用说明 v1.11.0+ -->
+    <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
+      <label style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleWithProxyHelp(this)">
+        <span>🛡️ 命令行代理（with-proxy / 完全可回滚）</span>
+        <span class="collapse-icon" style="transition:transform .2s">▼</span>
+      </label>
+      <div id="withProxyHelp" style="display:none;margin-top:8px;font-size:13px;line-height:1.7;color:var(--text-primary)">
+        <p><strong>不</strong>改 iptables、<strong>不</strong>改 /etc、<strong>不</strong>碰系统 —— 停用本应用即完全恢复。</p>
+        <p><strong>用法</strong>（SSH 连到 NAS）：</p>
+<pre style="background:var(--table-stripe);padding:8px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all"># 临时把单条命令走代理
+/vol3/@appcenter/xray-proxy-native/bin/with-proxy curl https://google.com
+/vol3/@appcenter/xray-proxy-native/bin/with-proxy apt update
+/vol3/@appcenter/xray-proxy-native/bin/with-proxy git clone https://github.com/xxx
+/vol3/@appcenter/xray-proxy-native/bin/with-proxy pip install xxx
+
+# 一次性给整个 shell 走代理（之后所有命令都走代理）
+export PATH=/vol3/@appcenter/xray-proxy-native/bin:$PATH
+source /vol3/@appcenter/xray-proxy-native/bin/enable-proxy.sh
+curl https://google.com
+apt update</pre>
+        <p><strong>支持的应用</strong>：apt / curl / wget / git / pip / npm / qBittorrent / Aria2 / Transmission 等所有尊重 LD_PRELOAD 的 C/C++ 程序。</p>
+        <p><strong>不支持</strong>：docker 守护进程 / 大部分飞牛官方应用（Go 写的，忽略 LD_PRELOAD）/ Chromium / Firefox。</p>
+        <p><strong>Docker 镜像拉取</strong>：用应用中心自带的代理设置（指向 <code style="background:var(--table-stripe);padding:1px 4px;border-radius:3px">192.168.2.132:10809</code>），不动系统。</p>
+        <p><strong>原理</strong>：LD_PRELOAD 注入 <code style="background:var(--table-stripe);padding:1px 4px;border-radius:3px">libproxychains4.so</code>（48KB），劫持 <code style="background:var(--table-stripe);padding:1px 4px;border-radius:3px">connect()</code> 把流量转给 xray SOCKS5（<code style="background:var(--table-stripe);padding:1px 4px;border-radius:3px">127.0.0.1:10808</code>）。</p>
+        <p><strong>回滚</strong>：停用本应用 → with-proxy 命令变空壳（连不上 10808）→ 网络 100% 恢复。</p>
+      </div>
+    </div>
+    <!-- 更新日志（可折叠） -->
+    <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
+      <label style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleChangelog(this)">
+        <span>📋 更新日志</span>
+        <span class="collapse-icon" style="transition:transform .2s">▼</span>
+      </label>
+      <div id="changelogContent" style="display:none;max-height:300px;overflow-y:auto;margin-top:8px;font-size:13px;line-height:1.7">
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.13.0 · 最新</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>A. 批量测速 + 自动切换最优节点</strong>：节点表头加"⚡ 全部测速"按钮，并发测试所有节点；开关"🤖 自动切换最优"后，系统会按最近 5 次平均延迟自动选最优节点（连续 3 次稳定 + 30s 最小间隔抖动保护），也可一键"🎯 立即切最优"</li>
+            <li>🆘 <strong>B. 节点延迟历史 7 天</strong>：每个节点自动记录历史延迟，环形 buffer 2000 条≈7d；节点操作列加"📊 历史"按钮，弹窗含 24h/7d 切换 + Chart.js 折线图，绿色健康/黄色一般/红色差延迟一目了然</li>
+            <li>🆘 <strong>D. 加密压缩备份</strong>：导出配置可勾选"加密（密码）" + "压缩 (gzip)"，AES-256-GCM + PBKDF2-SHA256(10万次迭代) 强加密；自动兼容 v1.12.0 明文格式（导入时自动识别）</li>
+            <li>📈 6 个新 API：<code>GET/POST /api/auto-select</code>（配置/手动触发/立即切换/指定切换）、<code>GET /api/history</code>（单节点/全部）、<code>POST /api/nodes/test-all</code>（批量并发测速）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.5</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>修"使用教程"按钮点击无反应 bug</strong>：v1.12.4 emptyConfigModal/tutorialModal 误用 <code>modal-overlay</code> class（无 CSS） + 内层 <code>.modal</code> 缺 <code>.active</code>，导致弹窗"看起来存在"实际不显示。修法：仿 wizardModal 结构（外层 <code>modal</code> + 内层 <code>modal-content</code>），4 行源码 hotfix</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.4</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>应用商店 desc 明确"需要自备节点"</strong>：避免新用户误装 + 给出明确预期</li>
+            <li>🆘 <strong>"配置为空" 友好弹窗</strong>：替代红色 toast，弹窗带"导入链接 / 添加节点 / 使用教程" 3 个引导按钮</li>
+            <li>🆘 <strong>使用教程弹窗</strong>：3 种获取节点方式详解（机场 / 自建 / 免费）+ 完整使用流程 + 进阶功能说明</li>
+            <li>主页面新增"📖 使用教程"按钮，永久可访问</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.3</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>修复"配置为空"误判</strong>：<code>isEmptyConfig</code> 改为检查是否有任意 vless/vmess/trojan/shadowsocks 节点（不再只检查 tag='proxy' 的第一个节点）</li>
+            <li>🆘 <strong>addNode 智能重命名</strong>：添加第一个真实代理节点时，自动删除 freedom 占位 + 让新节点占据 'proxy' tag（routing 规则无缝衔接）</li>
+            <li>"导入链接"/"添加节点" tag 自定义不再被覆盖——只在没有真实代理节点时启用智能重命名</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.2</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>进程清理加用户级 pkill 兜底</strong>：<code>pkill -KILL -u xray_proxy -f "node server.js"</code>（PID_FILE 缺失/失效时仍可清掉旧进程，<strong>绝不可能误杀 SSH</strong>）</li>
+            <li>🆘 <strong>start_process 自动启动 xray</strong>：Node listen 后自动调 <code>POST /api/start</code>，解决 v1.12.0/v1.12.1 装上后 xray 不自动起的 bug</li>
+            <li>cmd/main stop_process + install_callback + uninstall_callback + upgrade_callback 4 处加 <code>pkill -u xray_proxy</code> 兜底</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.1</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 应用商店描述移除更新日志：manifest desc 只保留"核心能力"（更新日志只在 UI changelog 展示）</li>
+            <li>🆘 批量操作 API 加固：action 白名单（enable/disable/delete/group）+ tags 数量上限 100（避免误传大数组 DoS）</li>
+            <li>节点列表返回 system:true 标记：前端可读 system 字段，不再依赖硬编码 SYSTEM_NODE_TAGS</li>
+            <li>defaultConfig 启动日志去重：只在第一次加载时打一行（getConfig/migrateConfig 重复调用不再刷屏）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.12.0</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 升级回调不再空白：升级后自动重装 npm 依赖（v1.7.3 加 @grpc 教训不再重演）</li>
+            <li>🆘 进程清理全部改 PID_FILE 精确匹配（cmd/main + install/uninstall_callback，杜绝 pkill -f 误杀 SSH）</li>
+            <li>🆘 mobile 表格隐藏列修正：手机端可看到协议 + 地址 + 延迟（v1.8.0 教训彻底修复）</li>
+            <li>备份 .import-bak 自动清理（最多保留 5 个）</li>
+            <li>QUIET_PATHS 补全（/api/health + /api/traffic/history）</li>
+            <li>SSE 实时日志错误处理（client 突然断不再泄漏定时器）</li>
+            <li>删 dead code：xray 客户端路径硬编码、importFromXrayClient 死函数</li>
+            <li>配置模板统一：seed.json 与 config.js defaultConfig 字段一致</li>
+            <li>stats 深拷贝优化：perNode 已是新对象，去掉 JSON.parse(JSON.stringify())</li>
+            <li>migrateConfig policy.system 尊重用户显式 false</li>
+            <li>package.json version 与 fpk 同步 1.12.0</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.11.0</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆕 <strong>with-proxy</strong> 命令行代理包裹器（<code>proxychains-ng 4.17</code> 静态编译：48KB .so + 14.7KB 命令行）</li>
+            <li>不动 iptables / 不改 /etc / 100% 可回滚（停用即失效）</li>
+            <li>支持 apt / curl / wget / git / pip / npm / qBittorrent / Aria2 等</li>
+            <li>设置弹窗加"命令行代理"使用说明（折叠区）</li>
+            <li>不支持 docker 守护进程 / Go 应用 / 浏览器（LD_PRELOAD 限制）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.10.x</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 流量统计 TDZ 修复：recordHistory 调用顺序修正（v1.10.1）</li>
+            <li>节点健康检查：5 分钟自动 ping，失败 3 次自动禁用 + 🟢🟡🔴 健康度</li>
+            <li>节点搜索/过滤：工具栏搜索框 + 协议/分组/状态下拉</li>
+            <li>延迟颜色编码：<100ms 绿 / <300ms 黄 / >300ms 红 / 失败灰</li>
+            <li>批量操作：复选框工具栏 + 启用/禁用/改分组/删除（系统节点保护）</li>
+            <li>流量图表：Chart.js 24h 趋势（每小时一个数据点）</li>
+            <li>SSE 实时日志：替代 5s 轮询，1 秒粒度，自动重连</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.9.0</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>配置导入/导出/重置（设置弹窗底部 3 个按钮）</li>
+            <li>首次使用向导（3 步弹窗：粘贴链接→测速→完成）</li>
+            <li>节点分组（标签 + 编辑弹窗 + 智能提示）</li>
+            <li>暗色模式 3 态切换（light/dark/auto + 双击恢复）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.8.x · 手机适配</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>手机界面适配（响应式 + 浮动测速按钮 + 面板折叠）</li>
+            <li>系统节点保护（🔒 标识 + 删除按钮禁用）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.7.x · 5 项优化</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>轮询过滤 + 流量排序 + 入站统计 + 流式日志 + 异常统计</li>
+            <li>修复 stats API gRPC 隐藏 bug（@grpc/grpc-js 客户端）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.6.0 · 重构 + 热加载</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>代码重构（xray.js 拆 8 模块 + server.js 拆 11 router）</li>
+            <li>节点变更零断流热加载（SIGUSR2）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">v1.5.x · 流量 + 订阅</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>流量统计（入站消费 + 节点排序）</li>
+            <li>节点订阅（base64 自动识别）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--table-stripe);border-radius:6px">
+          <div style="font-weight:600;margin-bottom:4px">v1.0 ~ v1.4 · 基础</div>
+          <ul style="margin:0;padding-left:20px">
+            <li>VLESS / VMess / Trojan / Shadowsocks 4 协议</li>
+            <li>Token 鉴权 + 延迟测试 + 崩溃自动重启</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeSettingsModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.13.0+ 节点延迟历史弹窗 -->
+<div class="modal" id="historyModal">
+  <div class="modal-content" style="max-width:800px;width:92%">
+    <h3>
+      <span>📊 <span id="historyTitle">延迟历史</span></span>
+      <button class="btn btn-outline btn-sm" onclick="closeHistoryModal()">✕</button>
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" id="historyBtn24" onclick="loadHistoryChart(24)">近 24h</button>
+      <button class="btn btn-outline btn-sm" id="historyBtn168" onclick="loadHistoryChart(168)">近 7 天</button>
+      <span id="historyStats" style="margin-left:auto;font-size:12px;color:var(--text-secondary)"></span>
+    </div>
+    <div style="position:relative;height:340px">
+      <canvas id="historyChart"></canvas>
+    </div>
+    <div id="historyHint" style="text-align:center;color:var(--text-secondary);font-size:12px;margin-top:8px">每 5 分钟一个数据点（自动检查）/ 手动测速也会记录</div>
+  </div>
+</div>
+
+<!-- 首次使用向导 -->
+<div class="modal" id="wizardModal" style="z-index:9999">
+  <div class="modal-content" style="max-width:560px">
+    <h3>
+      <span>🎉 欢迎使用 xray-proxy-native</span>
+      <button class="btn btn-outline btn-sm" onclick="wizardSkip()">跳过</button>
+    </h3>
+    <div style="display:flex;gap:8px;justify-content:center;margin:8px 0 16px">
+      <span id="wizard-dot-1" style="width:10px;height:10px;border-radius:50%;background:var(--primary);transition:background .2s"></span>
+      <span id="wizard-dot-2" style="width:10px;height:10px;border-radius:50%;background:var(--border);transition:background .2s"></span>
+      <span id="wizard-dot-3" style="width:10px;height:10px;border-radius:50%;background:var(--border);transition:background .2s"></span>
+    </div>
+
+    <!-- Step 1: 添加第一个节点 -->
+    <div id="wizard-step-1">
+      <h4 style="margin:8px 0 12px">① 添加第一个代理节点</h4>
+      <div class="form-group">
+        <label>粘贴节点链接（vless:// / vmess:// / trojan:// / ss://）</label>
+        <textarea id="wizard-link" rows="3" placeholder="vless://uuid@server:port?type=ws&security=tls&path=/ws#备注" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;font-family:monospace;font-size:13px;background:var(--input-bg);color:var(--text)"></textarea>
+        <div class="form-hint">从机场复制链接粘贴到这里即可</div>
+      </div>
+      <div id="wizard-step1-result" style="margin:8px 0"></div>
+    </div>
+
+    <!-- Step 2: 测速 -->
+    <div id="wizard-step-2" style="display:none">
+      <h4 style="margin:8px 0 12px">② 测试节点连通性</h4>
+      <p style="opacity:.8;margin:0 0 12px">点击「下一步」开始 TCP 握手测速（3 次取平均）</p>
+      <div id="wizard-step2-result" style="margin:8px 0;font-size:14px"></div>
+    </div>
+
+    <!-- Step 3: 完成 -->
+    <div id="wizard-step-3" style="display:none">
+      <h4 style="margin:8px 0 12px">③ 准备就绪 ✨</h4>
+      <p style="opacity:.8;margin:0 0 12px">节点已添加并测速。关闭此弹窗后，点击右上角「启动」按钮即可启动 xray。</p>
+      <ul style="opacity:.7;font-size:13px;padding-left:20px">
+        <li>本地 SOCKS 代理：<code>127.0.0.1:10808</code></li>
+        <li>本地 HTTP 代理：<code>127.0.0.1:10809</code></li>
+        <li>Web 面板 API：<code>127.0.0.1:8080</code></li>
+      </ul>
+    </div>
+
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-outline" onclick="wizardSkip()">稍后再说</button>
+      <button class="btn btn-primary" onclick="wizardNext()" id="wizard-next-btn">下一步 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- 暗色模式切换按钮 -->
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
+  <span id="themeIcon">🌙</span>
+</button>
+
+<!-- 手机端浮动测速按钮 -->
+<button class="fab-test" id="fabTest" onclick="fabTestAll()" title="测速所有节点">
+  ⚡
+</button>
+
+<div class="toast" id="toast"></div>
+<!-- v1.10.0+ Chart.js 流量图表 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// v1.7.4+ 系统节点白名单（前后端保持一致，UI 显示 🔒 + 禁用删除按钮）
+const SYSTEM_NODE_TAGS = ['proxy', 'direct', 'block', 'api'];
+
+let editingTag = null;
+let currentConfig = null;
+let dragSrc = null;
+
+// v1.8.0+ 暗色模式切换（localStorage 记忆）
+function initTheme() {
+  // v1.9.0+ 支持 3 态：light / dark / auto
+  // 第一次访问：auto（跟随系统）
+  // 手动切换：保存到 localStorage
+  // 双击按钮：恢复 auto
+  const saved = localStorage.getItem('theme');
+  if (saved && saved !== 'auto') {
+    document.documentElement.setAttribute('data-theme', saved);
+  } else {
+    // 跟随系统：移除 data-theme 让 @media 查询生效
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+function toggleTheme() {
+  // 单击：light <-> dark
+  // 长按/双击：恢复 auto（跟随系统）
+  const cur = document.documentElement.getAttribute('data-theme') ||
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  document.getElementById('themeIcon').textContent = next === 'dark' ? '☀️' : '🌙';
+}
+function resetTheme() {
+  // 双击：恢复 auto
+  document.documentElement.removeAttribute('data-theme');
+  localStorage.setItem('theme', 'auto');
+  const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.getElementById('themeIcon').textContent = sysDark ? '🌙' : '☀️';
+  showToast('已恢复跟随系统主题', 'info');
+}
+
+// v1.8.0+ 面板折叠
+function initCollapsibles() {
+  document.querySelectorAll('.section.collapsible').forEach(function(sec) {
+    const header = sec.querySelector('.section-header');
+    if (header) {
+      header.addEventListener('click', function() {
+        sec.classList.toggle('collapsed');
+      });
+    }
+  });
+}
+
+// v1.8.0+ 浮动测速按钮（手机端显示）
+// v1.10.0+ 批量操作
+function getSelectedTags() {
+  return [...document.querySelectorAll('.batch-cb:checked')].map(cb => cb.dataset.tag);
+}
+function updateBatchToolbar() {
+  const tags = getSelectedTags();
+  const tb = document.getElementById('batchToolbar');
+  const cnt = document.getElementById('batchCount');
+  if (tb) tb.style.display = tags.length > 0 ? 'flex' : 'none';
+  if (cnt) cnt.textContent = tags.length;
+}
+function toggleBatchAll(checked) {
+  document.querySelectorAll('.batch-cb').forEach(cb => cb.checked = checked);
+  updateBatchToolbar();
+}
+function clearBatchSelection() {
+  document.querySelectorAll('.batch-cb').forEach(cb => cb.checked = false);
+  const allCb = document.getElementById('batchAll');
+  if (allCb) allCb.checked = false;
+  updateBatchToolbar();
+}
+async function batchAction(action) {
+  const tags = getSelectedTags();
+  if (tags.length === 0) return showToast('请先选择节点', 'error');
+  if (action === 'delete' && !confirm('确定删除 ' + tags.length + ' 个节点？')) return;
+  try {
+    const r = await fetch('/api/nodes/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, tags })
+    });
+    const d = await r.json();
+    if (d.failed > 0) {
+      showToast('完成 ' + d.success + ' 个，失败 ' + d.failed + ' 个（系统节点不可删）', 'error');
+    } else {
+      showToast('已' + (action === 'enable' ? '启用' : action === 'disable' ? '禁用' : action === 'delete' ? '删除' : '操作') + ' ' + d.success + ' 个节点', 'success');
+    }
+    clearBatchSelection();
+    await loadConfig();
+  } catch (e) { showToast('批量操作失败: ' + e.message, 'error'); }
+}
+async function batchSetGroup() {
+  const tags = getSelectedTags();
+  if (tags.length === 0) return showToast('请先选择节点', 'error');
+  const group = prompt('设置分组（留空 = 清空分组）：');
+  if (group === null) return;
+  try {
+    const r = await fetch('/api/nodes/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'group', tags, group })
+    });
+    const d = await r.json();
+    showToast('已更新 ' + d.success + ' 个节点分组', 'success');
+    clearBatchSelection();
+    await loadConfig();
+  } catch (e) { showToast('操作失败: ' + e.message, 'error'); }
+}
+
+// v1.10.0+ 流量图表
+let _trafficChart = null;
+async function loadTrafficChart() {
+  try {
+    const r = await fetch('/api/traffic/history');
+    const d = await r.json();
+    if (!d.ok) return;
+    const history = d.history || [];
+    const labels = history.map(h => {
+      const dt = new Date(h.t);
+      return (dt.getMonth() + 1) + '/' + dt.getDate() + ' ' + dt.getHours() + ':00';
+    });
+    const upData = history.map(h => Math.round(h.up / 1024));      // KB
+    const downData = history.map(h => Math.round(h.down / 1024));  // KB
+    const ctx = document.getElementById('trafficChart').getContext('2d');
+    if (_trafficChart) _trafficChart.destroy();
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (!document.documentElement.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const gridColor = isDark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.1)';
+    const textColor = isDark ? '#aaa' : '#666';
+    _trafficChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels.length ? labels : ['暂无数据'],
+        datasets: [
+          { label: '↑ 上传 (KB)', data: upData, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.1)', tension: .3, fill: true },
+          { label: '↓ 下载 (KB)', data: downData, borderColor: '#1a73e8', backgroundColor: 'rgba(26,115,232,.1)', tension: .3, fill: true }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: textColor } } },
+        scales: {
+          x: { ticks: { color: textColor, maxRotation: 0, autoSkip: true }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor }, grid: { color: gridColor } }
+        }
+      }
+    });
+    document.getElementById('trafficChartHint').textContent = history.length > 0
+      ? '共 ' + history.length + ' 个数据点（最近 ' + Math.round((Date.now() - history[0].t) / 3600000) + ' 小时）'
+      : '每小时记录一个数据点（需要 xray 持续运行）';
+  } catch (e) { console.error('图表加载失败:', e); }
+}
+
+// v1.10.0+ 搜索/过滤节点
+let _allNodes = [];
+function applyNodeFilter() {
+  if (_allNodes.length > 0) renderNodes(_allNodes);
+}
+function applyNodeFilterFn(outbounds) {
+  _allNodes = outbounds || [];
+  const search = (document.getElementById('nodeSearch')?.value || '').toLowerCase().trim();
+  const fp = document.getElementById('filterProtocol')?.value || '';
+  const fg = document.getElementById('filterGroup')?.value || '';
+  const fs = document.getElementById('filterStatus')?.value || '';
+  const filtered = outbounds.filter(n => {
+    if (fp && n.protocol !== fp) return false;
+    if (fg && n.group !== fg) return false;
+    if (fs === 'enabled' && n._disabled) return false;
+    if (fs === 'disabled' && !n._disabled) return false;
+    if (search) {
+      const addr = (n.settings?.vnext?.[0]?.address) || (n.settings?.servers?.[0]?.address) || n.address || '';
+      const hay = ((n.remark || '') + ' ' + (n.tag || '') + ' ' + addr).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+  // 更新计数
+  const cnt = document.getElementById('nodeFilterCount');
+  if (cnt) {
+    if (filtered.length === outbounds.length) cnt.textContent = '共 ' + outbounds.length + ' 个';
+    else cnt.textContent = filtered.length + ' / ' + outbounds.length;
+  }
+  return filtered;
+}
+
+// v1.10.0+ 延迟颜色编码：<100ms 绿，<300ms 黄，>300ms 红，失败灰
+function formatLatency(d) {
+  if (!d || !d.ok) return '<span class="latency-fail">' + (d && d.error ? d.error : '失败') + '</span>';
+  const ms = d.tcp_ms;
+  if (typeof ms !== 'number') return '<span class="latency-fail">超时</span>';
+  let cls = 'latency-good';
+  if (ms > 300) cls = 'latency-bad';
+  else if (ms > 100) cls = 'latency-mid';
+  return '<span class="' + cls + '">' + ms + 'ms</span>';
+}
+
+async function fabTestAll() {
+  const cfg = currentConfig;
+  if (!cfg || !cfg.outbounds) { showToast('请先加载配置', 'error'); return; }
+  const userNodes = cfg.outbounds.filter(n => !SYSTEM_NODE_TAGS.includes(n.tag));
+  if (userNodes.length === 0) { showToast('没有可测试的用户节点', 'error'); return; }
+  showToast('开始测速 ' + userNodes.length + ' 个节点…', 'info');
+  for (const node of userNodes) {
+    document.getElementById('latency-' + node.tag).textContent = '…';
+  }
+  for (const node of userNodes) {
+    try {
+      const r = await fetch('/api/nodes/' + encodeURIComponent(node.tag) + '/test', { method: 'POST' });
+      const d = await r.json();
+      const el = document.getElementById('latency-' + node.tag);
+      el.innerHTML = formatLatency(d);
+    } catch (_) {
+      const el = document.getElementById('latency-' + node.tag);
+      el.innerHTML = '<span class="latency-fail">失败</span>';
+    }
+  }
+  showToast('测速完成', 'success');
+}
+
+// v1.10.0+ 健康度轮询（每 30 秒）
+let _healthTimer = null;
+async function loadHealth() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    if (!d.ok) return;
+    for (const tag in d.health) {
+      const h = d.health[tag];
+      const el = document.getElementById('health-' + tag);
+      if (!el) continue;
+      const failCount = h.failCount || 0;
+      const isAuto = h.disabled;
+      if (failCount === 0 && !isAuto) {
+        el.innerHTML = '<span class="health-ok" title="健康">🟢</span>';
+      } else if (failCount < 3 && !isAuto) {
+        el.innerHTML = '<span class="health-warn" title="失败 ' + failCount + ' 次">🟡' + failCount + '</span>';
+      } else if (isAuto) {
+        el.innerHTML = '<span class="health-bad" title="自动禁用（连续失败 ≥3 次）" style="cursor:pointer" onclick="resetHealth(\'' + tag + '\')">🔒</span>';
+      } else {
+        el.innerHTML = '<span class="health-warn" title="失败 ' + failCount + ' 次">🟡' + failCount + '</span>';
+      }
+    }
+  } catch (_) {}
+}
+async function resetHealth(tag) {
+  if (!confirm('重置节点「' + tag + '」的健康状态？\n（清除失败计数，但 _disabled 需要手动启用开关）')) return;
+  try {
+    const r = await fetch('/api/health/reset/' + encodeURIComponent(tag), { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) { showToast('健康状态已重置', 'success'); await loadHealth(); }
+  } catch (e) { showToast('重置失败: ' + e.message, 'error'); }
+}
+
+async function init() {
+  initTheme();
+  // v1.9.0+ 双击主题按钮恢复 auto 模式
+  const themeBtn = document.getElementById('themeToggle');
+  if (themeBtn) {
+    themeBtn.ondblclick = function(e) { e.preventDefault(); resetTheme(); };
+  }
+  // 更新主题按钮图标
+  const curTheme = document.documentElement.getAttribute('data-theme') ||
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const ti = document.getElementById('themeIcon');
+  if (ti) ti.textContent = curTheme === 'dark' ? '☀️' : '🌙';
+  // 启动
+  await loadStatus();
+  await loadConfig();
+  await loadSystemInfo();
+  await loadLogs();
+  await loadHealth();
+  await loadTrafficChart();
+  startLogSSE();  // v1.10.0+ 实时 SSE 日志
+  setInterval(loadStatus, 5000);
+  setInterval(loadHealth, 30000);
+  setInterval(loadTrafficChart, 30 * 60 * 1000);  // 30 分钟刷新一次图表
+  initCollapsibles();
+}
+
+async function loadSystemInfo() {
+  try {
+    const r = await fetch('/api/system');
+    const d = await r.json();
+    if (d.ok) document.getElementById('systemInfo').textContent = `${d.hostname} | ${d.platform}/${d.arch} | Node ${d.nodeVersion} | ${d.cpus} CPU`;
+  } catch(_) {}
+}
+
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    const badge = document.getElementById('headerStatus');
+    const st = document.getElementById('statStatus');
+    if (data.starting) {
+      badge.innerHTML = '<span class="status-badge starting">⟳ 启动中...</span>';
+      st.textContent = '⟳ 启动中';
+      st.className = 'value yellow';
+    } else if (data.running) {
+      badge.innerHTML = '<span class="status-badge running">● 运行中</span>';
+      st.textContent = '● 运行中';
+      st.className = 'value green';
+    } else {
+      badge.innerHTML = '<span class="status-badge stopped">● 已停止</span>';
+      st.textContent = '● 已停止';
+      st.className = 'value red';
+    }
+    document.getElementById('statBinary').textContent = data.binary || '❌ 未找到';
+    document.getElementById('btnStart').disabled = data.running || data.starting || data.empty_config;
+    document.getElementById('btnStop').disabled = !data.running;
+    // v1.4.0+ 崩溃自动重启状态
+    renderAutoRestart(data.auto_restart);
+    // v1.3.0+ 空白配置引导横幅
+    showEmptyConfigBanner(data.empty_config);
+    // v1.5.0+ 流量统计轮询（5 秒一次）
+    if (data.running) startTrafficPoll(); else stopTrafficPoll();
+  } catch(e) {
+    document.getElementById('headerStatus').innerHTML = '<span class="status-badge stopped">连接失败</span>';
+  }
+}
+
+// v1.3.0+ 当配置为空时显示引导横幅
+function showEmptyConfigBanner(empty) {
+  // v1.9.0+ 向导触发：第一次空配置时弹向导
+  window._cfgSnapshot = { empty: empty, proxyOutCount: empty ? 0 : (window._cfgSnapshot?.proxyOutCount || 0) };
+  if (empty) {
+    window._cfgSnapshot.proxyOutCount = 0;
+    maybeShowWizard();
+  }
+  let banner = document.getElementById('empty-config-banner');
+  if (empty) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'empty-config-banner';
+      banner.style.cssText = 'background:linear-gradient(135deg,#fbbc04,#ea4335);color:#fff;padding:16px 24px;margin:0 0 16px 0;border-radius:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.1)';
+      banner.innerHTML = `
+        <div style="font-size:24px">🚀</div>
+        <div style="flex:1;min-width:240px">
+          <div style="font-weight:600;font-size:15px;margin-bottom:4px">欢迎使用代理管理！</div>
+          <div style="font-size:13px;opacity:.95">请添加你的第一个代理节点（vless/vmess/trojan/shadowsocks）。添加后才能启动 xray。</div>
+        </div>
+        <button class="btn" style="background:#fff;color:#ea4335" onclick="openAddNodeModal()">➕ 添加节点</button>
+        <button class="btn" style="background:rgba(255,255,255,.2);color:#fff" onclick="openImportModal()">📋 导入链接</button>
+      `;
+      const container = document.querySelector('.container');
+      if (container) container.insertBefore(banner, container.firstChild);
+    }
+  } else {
+    if (banner) banner.remove();
+  }
+}
+
+// v1.9.0+ 首次使用向导：3 步引导添加第一个节点
+let _wizardStep = 1;
+let _wizardAddedTag = null;
+
+let _wizardTimer = null;  // v1.12.0+ 跟踪 wizard 延迟弹出定时器，避免重复触发
+function maybeShowWizard() {
+  // 检查空配置 + 首次访问（localStorage）
+  if (!window._cfgSnapshot) return;
+  if (window._cfgSnapshot.proxyOutCount > 0) return;  // 已有节点，不显示
+  if (localStorage.getItem('wizard-seen') === '1') return;
+  // 延迟 1.5s 弹出（让界面渲染完）
+  // v1.12.0+ 取消旧定时器，避免快速添加+删除节点时重复触发
+  if (_wizardTimer) { clearTimeout(_wizardTimer); _wizardTimer = null; }
+  _wizardTimer = setTimeout(() => { _wizardTimer = null; showWizard(); }, 1500);
+}
+
+function showWizard() {
+  _wizardStep = 1;
+  _wizardAddedTag = null;
+  document.getElementById('wizardModal').classList.add('active');
+  renderWizardStep();
+}
+
+function closeWizard() {
+  document.getElementById('wizardModal').classList.remove('active');
+  localStorage.setItem('wizard-seen', '1');
+}
+
+function renderWizardStep() {
+  // 隐藏所有
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById('wizard-step-' + i);
+    if (el) el.style.display = 'none';
+  }
+  // 进度指示
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById('wizard-dot-' + i);
+    if (!dot) continue;
+    dot.style.background = (i <= _wizardStep) ? 'var(--primary)' : 'var(--border)';
+  }
+  // 显示当前
+  const cur = document.getElementById('wizard-step-' + _wizardStep);
+  if (cur) cur.style.display = 'block';
+}
+
+async function wizardNext() {
+  if (_wizardStep === 1) {
+    // Step 1: 解析 vless/vmess 链接并添加
+    const link = document.getElementById('wizard-link').value.trim();
+    if (!link) { showToast('请粘贴节点链接', 'error'); return; }
+    try {
+      const r = await fetch('/api/nodes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shareLink: link })
+      });
+      const d = await r.json();
+      if (!d.ok) { showToast(d.error || '解析失败', 'error'); return; }
+      _wizardAddedTag = d.tag;
+      document.getElementById('wizard-step1-result').innerHTML = '✅ 已添加节点: <b>' + d.tag + '</b> (' + d.protocol + ')';
+      _wizardStep = 2;
+      renderWizardStep();
+    } catch (e) { showToast('添加失败: ' + e.message, 'error'); }
+  } else if (_wizardStep === 2) {
+    // Step 2: 测速
+    if (!_wizardAddedTag) { _wizardStep = 3; renderWizardStep(); return; }
+    showToast('正在测速...', 'info');
+    try {
+      const r = await fetch('/api/nodes/test/' + encodeURIComponent(_wizardAddedTag), { method: 'POST' });
+      const d = await r.json();
+      if (d.ok && d.tcp_ms) {
+        document.getElementById('wizard-step2-result').innerHTML = '✅ 延迟: <b>' + d.tcp_ms + ' ms</b>';
+      } else if (d.ok) {
+        document.getElementById('wizard-step2-result').innerHTML = '⚠️ 测速失败，但节点已添加';
+      } else {
+        document.getElementById('wizard-step2-result').innerHTML = '⚠️ ' + (d.error || '测速失败') + '，但节点已添加';
+      }
+      _wizardStep = 3;
+      renderWizardStep();
+    } catch (e) {
+      document.getElementById('wizard-step2-result').innerHTML = '⚠️ 测速出错，但节点已添加';
+      _wizardStep = 3;
+      renderWizardStep();
+    }
+  } else {
+    // Step 3: 启动 xray
+    closeWizard();
+    showToast('配置完成！请点击右上角「启动」按钮启动 xray', 'success');
+  }
+}
+
+function wizardSkip() {
+  closeWizard();
+}
+
+
+// v1.4.0+ 渲染崩溃自动重启守护状态
+function renderAutoRestart(ar) {
+  if (!ar) return;
+  const el = document.getElementById('statAutoRestart');
+  const info = document.getElementById('statAutoRestartInfo');
+  const btn = document.getElementById('btnToggleAutoRestart');
+  if (ar.enabled) {
+    el.textContent = '🛡️ 开启中';
+    el.className = 'value green';
+    btn.textContent = '关闭守护';
+    let txt = `${ar.delayMs / 1000}s 延迟 · 1h 上限 ${ar.maxPerHour} 次`;
+    if (ar.recentRestarts > 0) {
+      txt += ` · 1h 内已重启 ${ar.recentRestarts} 次`;
+    }
+    if (ar.pendingRestart) {
+      txt += ' · ⏳ 等待重启中';
+    }
+    info.textContent = txt;
+  } else {
+    el.textContent = '⛔ 已关闭';
+    el.className = 'value red';
+    btn.textContent = '开启守护';
+    info.textContent = 'xray 崩溃后不会自动重启，需手动启动';
+  }
+}
+
+// v1.4.0+ 切换崩溃自动重启守护
+async function toggleAutoRestart() {
+  const btn = document.getElementById('btnToggleAutoRestart');
+  const el = document.getElementById('statAutoRestart');
+  // 读取当前状态以决定翻转方向
+  const cur = (el.textContent || '').includes('开启') || (el.textContent || '').includes('🛡');
+  const target = !cur;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/auto-restart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: target })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await loadStatus();
+    } else {
+      alert('切换失败: ' + (d.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('网络错误: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// v1.5.0+ 流量统计
+function formatBytes(n) {
+  if (n == null || isNaN(n) || n < 0) n = 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+let trafficTimer = null;
+async function loadTraffic() {
+  try {
+    const r = await fetch('/api/traffic');
+    const d = await r.json();
+    renderTraffic(d);
+  } catch (e) { /* 静默 */ }
+}
+
+function renderTraffic(d) {
+  const elTotal = document.getElementById('statTraffic');
+  const elInfo = document.getElementById('statTrafficInfo');
+  const elInbound = document.getElementById('statInbound');
+  if (!d || !d.running) {
+    elTotal.innerHTML = '↓ -<br>↑ -';
+    elInfo.textContent = d && d.error ? d.error : 'xray 未运行';
+    if (elInbound) elInbound.textContent = '📥 入站: -';
+    // 节点列也清空
+    document.querySelectorAll('[id^="traffic-"]').forEach(e => e.textContent = '-');
+    return;
+  }
+  if (!d.ok) {
+    elTotal.innerHTML = '↓ -<br>↑ -';
+    elInfo.textContent = d.error || 'stats 无响应';
+    if (elInbound) elInbound.textContent = '📥 入站: -';
+    return;
+  }
+  // 总流量（down=用户下载, up=用户上传）—— outbound 转发出站
+  const t = d.total || { up: 0, down: 0 };
+  elTotal.innerHTML = '↓ ' + formatBytes(t.down) + '<br>↑ ' + formatBytes(t.up);
+  elInfo.textContent = '实时 · ' + new Date().toLocaleTimeString();
+  // v1.7.0+ 入站总流量（用户实际消费）
+  if (elInbound) {
+    const inb = d.inbound || {};
+    let inbUp = 0, inbDown = 0;
+    for (const tag of Object.keys(inb)) {
+      inbUp += inb[tag].up || 0;
+      inbDown += inb[tag].down || 0;
+    }
+    elInbound.innerHTML = '📥 入站: ↓ ' + formatBytes(inbDown) + ' ↑ ' + formatBytes(inbUp);
+  }
+  // 各节点流量（兼容旧版 traffic + v1.7.0+ traffic_sorted）
+  // v1.7.0+ 排序后，UI 已按 sorted 顺序渲染过节点行（通过 renderNodes 接收 sorted 参数）
+  const nodes = d.traffic || {};
+  document.querySelectorAll('[id^="traffic-"]').forEach(e => {
+    const tag = e.id.replace('traffic-', '');
+    const n = nodes[tag];
+    if (n) e.innerHTML = '↓ ' + formatBytes(n.down) + '<br>↑ ' + formatBytes(n.up);
+    else e.textContent = '-';
+  });
+}
+
+function startTrafficPoll() {
+  if (trafficTimer) return;
+  loadTraffic();
+  trafficTimer = setInterval(loadTraffic, 5000);
+}
+function stopTrafficPoll() {
+  if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/nodes');
+    const data = await r.json();
+    currentConfig = { outbounds: data.nodes };
+    // v1.9.0+ 记录 proxyOutCount 供向导使用
+    const proxyCount = (data.nodes || []).filter(n => !SYSTEM_NODE_TAGS.includes(n.tag)).length;
+    window._cfgSnapshot = { proxyOutCount: proxyCount };
+    // v1.7.0+ 优先用 traffic_sorted 排序（流量大 → 前面）
+    let sorted = data.nodes;
+    try {
+      const tr = await fetch('/api/traffic');
+      const td = await tr.json();
+      if (td.ok && Array.isArray(td.traffic_sorted) && td.traffic_sorted.length > 0) {
+        const order = td.traffic_sorted.map(n => n.tag);
+        sorted = [...data.nodes].sort((a, b) => {
+          const ia = order.indexOf(a.tag);
+          const ib = order.indexOf(b.tag);
+          if (ia === -1 && ib === -1) return 0;
+          if (ia === -1) return 1;  // 没流量排后面
+          if (ib === -1) return -1;
+          return ia - ib;
+        });
+      }
+    } catch (_) { /* traffic 失败就用原序 */ }
+    renderNodes(sorted);
+    // v1.9.0+ 首次访问空配置触发向导
+    if (proxyCount === 0) maybeShowWizard();
+    // v1.13.0+ 加载最优节点 + 自动切换状态
+    loadOptimalNode();
+  } catch(e) {
+    document.getElementById('nodeList').innerHTML = '<div class="empty-state">❌ 加载失败: ' + e.message + '</div>';
+  }
+}
+
+function renderNodes(outbounds) {
+  const el = document.getElementById('nodeList');
+  if (!outbounds || outbounds.length === 0) {
+    document.getElementById('statNodes').textContent = '0 / 0';
+    el.innerHTML = '<div class="empty-state">📭 <p>暂无节点，点击「添加节点」或「导入链接」开始配置</p></div>';
+    return;
+  }
+  const enabled = outbounds.filter(function(n){ return !n._disabled; }).length;
+  document.getElementById('statNodes').textContent = enabled + ' / ' + outbounds.length;
+
+  // v1.10.0+ 更新分组过滤选项
+  if (window._lastOutbounds !== outbounds) {
+    window._lastOutbounds = outbounds;
+    const groups = [...new Set(outbounds.map(n => n.group).filter(Boolean))].sort();
+    const fg = document.getElementById('filterGroup');
+    if (fg) {
+      const cur = fg.value;
+      fg.innerHTML = '<option value="">全部分组</option>' + groups.map(g => '<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>').join('');
+      fg.value = cur;
+    }
+  }
+
+  // v1.10.0+ 应用搜索 / 过滤
+  const filtered = applyNodeFilterFn(outbounds);
+
+  let html = '<table><thead><tr><th style="width:30px"><input type="checkbox" id="batchAll" onchange="toggleBatchAll(this.checked)"></th><th>备注</th><th>分组</th><th>协议</th><th>地址</th><th>传输</th><th>延迟</th><th>健康</th><th>流量</th><th>启用</th><th>操作</th></tr></thead><tbody>';
+  for (const node of filtered) {
+    const proto = node.protocol || '?';
+    const settings = node.settings || {};
+    const vnext = settings.vnext || [];
+    const servers = settings.servers || [];
+    let addr = '-', port = '-';
+    if (vnext[0]) { addr = vnext[0].address || '-'; port = vnext[0].port || '-'; }
+    else if (servers[0]) { addr = servers[0].address || '-'; port = servers[0].port || '-'; }
+    else if (node.address) { addr = node.address; port = node.port || '-'; }
+    const stream = node.streamSettings && node.streamSettings.network || 'tcp';
+    const tls = node.streamSettings && node.streamSettings.security;
+    const tag = node.tag || '?';
+    const isDisabled = !!node._disabled;
+    const safeTag = String(tag).replace(/'/g, "\\'");
+    // v1.7.4+ 系统节点保护：proxy/direct/block/api 显示 🔒 标识，删除按钮禁用
+    const isSystem = SYSTEM_NODE_TAGS.includes(tag);
+    html += '<tr draggable="true" class="' + (isDisabled ? 'disabled' : '') + (isSystem ? ' system-node' : '') + '" data-tag="' + escapeHtml(tag) + '">';
+    html += '<td>' + (isSystem ? '' : '<input type="checkbox" class="batch-cb" data-tag="' + escapeHtml(tag) + '" onchange="updateBatchToolbar()">') + '<br><span class="drag-handle">⋮⋮</span></td>';
+    html += '<td><strong>' + escapeHtml(node.remark || tag) + '</strong>' + (isSystem ? ' <span class="lock-badge" title="系统节点，不可删除">🔒</span>' : '') + '<br><span class="tag-cell">' + escapeHtml(tag) + '</span></td>';
+    // v1.9.0+ 分组列
+    html += '<td>' + (node.group ? '<span class="group-badge">' + escapeHtml(node.group) + '</span>' : '<span style="opacity:.4">-</span>') + '</td>';
+    html += '<td><span class="proto-badge ' + proto + '">' + proto + '</span></td>';
+    html += '<td>' + escapeHtml(String(addr)) + ':' + port + '</td>';
+    html += '<td>' + stream + (tls && tls !== 'none' ? ' + ' + tls : '') + '</td>';
+    // v1.3.0+ 延迟测试列
+    html += '<td><span id="latency-' + escapeHtml(tag) + '">-</span></td>';
+    // v1.10.0+ 健康度列
+    html += '<td><span id="health-' + escapeHtml(tag) + '" class="health-cell">⏳</span></td>';
+    // v1.5.0+ 流量列
+    html += '<td style="font-size:11px" id="traffic-' + escapeHtml(tag) + '">-</td>';
+    html += '<td><label class="toggle-switch"><input type="checkbox" ' + (!isDisabled ? 'checked' : '') + ' onchange="toggleNode(\'' + safeTag + '\', this.checked)"><span class="toggle-slider"></span></label></td>';
+    // v1.7.4+ 系统节点删除按钮禁用
+    const deleteBtnClass = isSystem ? 'btn btn-danger btn-sm disabled' : 'btn btn-danger btn-sm';
+    const deleteBtnOnclick = isSystem ? '' : 'onclick="deleteNode(\'' + safeTag + '\')"';
+    const deleteBtnTitle = isSystem ? '系统节点不可删除' : '删除节点';
+    html += '<td><button class="btn btn-outline btn-sm" onclick="testNodeLatency(\'' + safeTag + '\')" title="测延迟">⚡</button> <button class="btn btn-outline btn-sm" onclick="openHistoryModal(\'' + safeTag + '\')" title="延迟历史">📊</button> <button class="btn btn-outline btn-sm" onclick="editNode(\'' + safeTag + '\')">✏️</button> <button class="' + deleteBtnClass + '" ' + deleteBtnOnclick + ' title="' + deleteBtnTitle + '"' + (isSystem ? ' disabled' : '') + '>🗑</button></td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  bindDragEvents();
+}
+
+function bindDragEvents() {
+  const rows = document.querySelectorAll('#nodeList tr[draggable]');
+  rows.forEach(function(row){
+    row.addEventListener('dragstart', function(e){
+      dragSrc = row.dataset.tag;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', function(){
+      row.classList.remove('dragging');
+      document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
+    });
+    row.addEventListener('dragover', function(e){
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', function(){ row.classList.remove('drop-target'); });
+    row.addEventListener('drop', async function(e){
+      e.preventDefault();
+      row.classList.remove('drop-target');
+      const dst = row.dataset.tag;
+      if (dragSrc && dst && dragSrc !== dst) await reorderNodes(dragSrc, dst);
+    });
+  });
+}
+
+async function reorderNodes(srcTag, dstTag) {
+  const tags = (currentConfig.outbounds || []).map(function(n){ return n.tag; });
+  const srcIdx = tags.indexOf(srcTag);
+  const dstIdx = tags.indexOf(dstTag);
+  if (srcIdx < 0 || dstIdx < 0) return;
+  const moved = tags.splice(srcIdx, 1)[0];
+  tags.splice(dstIdx, 0, moved);
+  try {
+    const r = await fetch('/api/nodes/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: tags }) });
+    const d = await r.json();
+    if (d.ok) await loadConfig();
+  } catch(e) { showToast('排序失败', 'error'); }
+}
+
+async function proxyAction(action) {
+  showToast(action === 'start' ? '正在启动...' : action === 'stop' ? '正在停止...' : '正在重启...', 'warning');
+  try {
+    const r = await fetch('/api/' + action, { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      showToast(action === 'start' ? '已启动' : action === 'stop' ? '已停止' : '已重启', 'success');
+    } else {
+      // v1.12.3+ 友好提示：检测"配置为空"错误时弹带引导按钮的特殊弹窗
+      if (data.error && data.error.includes('配置为空')) {
+        showEmptyConfigModal();
+      } else {
+        showToast(data.error || '操作失败', 'error');
+      }
+    }
+  } catch(e) {
+    showToast('操作失败: ' + e.message, 'error');
+  } finally {
+    await loadStatus();
+  }
+}
+
+// v1.12.3+ "配置为空" 友好弹窗：替代简单的红色 toast
+function showEmptyConfigModal() {
+  if (document.getElementById('emptyConfigModal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'emptyConfigModal';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:480px;padding:24px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="font-size:32px">🚀</div>
+        <h3 style="margin:0">开始你的代理之旅</h3>
+        <button class="modal-close" onclick="document.getElementById('emptyConfigModal').remove()" style="margin-left:auto">×</button>
+      </div>
+      <p style="margin:0 0 16px;line-height:1.6">xray 启动需要至少一个代理节点。本应用是 <strong>xray 客户端 GUI</strong>，<strong style="color:var(--primary)">需要你自备节点</strong>（机场订阅 / 自建 VPS）。</p>
+      <div style="background:var(--tag-bg);padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.7">
+        <strong>📖 没有节点？</strong><br/>
+        • <strong>机场订阅</strong>：网上搜"v2ray 机场推荐"，订阅链接通常以 <code>https://...</code> 开头<br/>
+        • <strong>自建 VPS</strong>：需要一台境外服务器 + 域名，自建稍复杂但隐私性最好<br/>
+        • <strong>完整教程</strong>：点下方"使用教程"按钮
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="document.getElementById('emptyConfigModal').remove();openImportModal()" style="flex:1;min-width:120px">📋 导入链接</button>
+        <button class="btn btn-success" onclick="document.getElementById('emptyConfigModal').remove();openAddModal()" style="flex:1;min-width:120px">➕ 添加节点</button>
+        <button class="btn btn-outline" onclick="document.getElementById('emptyConfigModal').remove();showTutorial()" style="flex:1;min-width:120px">📖 使用教程</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+// v1.12.3+ 使用教程弹窗：3 步引导（代理原理 / 获取节点 / 配置使用）
+function showTutorial() {
+  if (document.getElementById('tutorialModal')) {
+    document.getElementById('tutorialModal').classList.add('active');
+    return;
+  }
+  const modal = document.createElement('div');
+  modal.id = 'tutorialModal';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:720px;width:92%;max-height:90vh;overflow-y:auto;padding:0">
+      <div style="position:sticky;top:0;background:var(--card-bg);padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;z-index:2">
+        <h3 style="margin:0;flex:1">📖 使用教程</h3>
+        <button class="modal-close" onclick="document.getElementById('tutorialModal').classList.remove('active')">×</button>
+      </div>
+      <div style="padding:20px 24px;line-height:1.8;font-size:14px">
+
+        <div style="background:var(--tag-bg);padding:16px;border-radius:8px;margin-bottom:20px">
+          <h4 style="margin:0 0 8px">💡 一句话理解</h4>
+          <p style="margin:0">本应用 = <strong>xray 客户端 GUI</strong>，需要配合 <strong>代理节点</strong>（机场订阅 / 自建 VPS）使用。<br/>
+          类比：本应用是"路由器"，节点是"宽带账号"。<strong>没有节点，本应用就只是一个空壳</strong>。</p>
+        </div>
+
+        <h4 style="margin:20px 0 12px">🌐 三种获取节点的方式</h4>
+
+        <details style="margin-bottom:12px" open>
+          <summary style="cursor:pointer;padding:10px;background:var(--tag-bg);border-radius:6px;font-weight:600">① 机场订阅（最简单，5 分钟上手）</summary>
+          <div style="padding:12px 16px;border-left:3px solid var(--primary);margin:8px 0;background:var(--bg-secondary)">
+            <p><strong>什么是机场？</strong>提供代理节点服务的商家，按月/年收费。</p>
+            <p><strong>怎么找？</strong>搜索引擎搜"v2ray 机场推荐 2026"，看测评博客。</p>
+            <p><strong>怎么用？</strong></p>
+            <ol style="padding-left:24px">
+              <li>注册机场账号 → 开通套餐（一般 10-50 元/月）</li>
+              <li>在机场后台找到"订阅链接"（通常以 <code>https://...</code> 开头）</li>
+              <li>复制链接，回到本应用 → 点"导入链接"或"批量导入"</li>
+              <li>应用自动解析所有节点 → 点"启动"完成 ✅</li>
+            </ol>
+            <p style="margin-top:8px"><strong>⚠️ 选机场注意</strong>：看老牌稳定、跑路风险低、线路多的。</p>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;padding:10px;background:var(--tag-bg);border-radius:6px;font-weight:600">② 自建 VPS（最安全，需要技术）</summary>
+          <div style="padding:12px 16px;border-left:3px solid var(--primary);margin:8px 0;background:var(--bg-secondary)">
+            <p><strong>什么是自建？</strong>自己买境外 VPS（阿里云海外、AWS、Vultr 等），自己装 xray 服务端。</p>
+            <p><strong>优点</strong>：隐私性最好、不受机场跑路影响、可定制。</p>
+            <p><strong>缺点</strong>：需要 Linux 基础 + 域名 + 每月 VPS 费用（$5+）。</p>
+            <p><strong>推荐教程</strong>：<a href="https://www.v2ray.com/" target="_blank" style="color:var(--primary)">v2ray 官方文档</a> / <a href="https://github.com/XTLS/Xray-core" target="_blank" style="color:var(--primary)">Xray-core GitHub</a></p>
+            <p><strong>建好后</strong>：xray 服务端会输出 <code>vless://</code> 或 <code>vmess://</code> 分享链接，复制到本应用"导入链接"。</p>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;padding:10px;background:var(--tag-bg);border-radius:6px;font-weight:600">③ 免费节点（不推荐，临时测试用）</summary>
+          <div style="padding:12px 16px;border-left:3px solid #ea4335;margin:8px 0;background:var(--bg-secondary)">
+            <p><strong>⚠️ 警告</strong>：免费节点 <strong>速度慢、不稳定、有隐私风险</strong>（节点运营者可看到你的所有流量）。</p>
+            <p>仅供临时测试，请尽快切换到付费机场或自建。</p>
+            <p>搜索"免费 v2ray 节点 24 小时"能找到分享站。</p>
+          </div>
+        </details>
+
+        <h4 style="margin:24px 0 12px">🚀 完整使用流程</h4>
+        <ol style="padding-left:24px;line-height:2">
+          <li><strong>获取节点</strong>：选上面 ① ② ③ 任一方式拿到分享链接 / 订阅链接</li>
+          <li><strong>导入节点</strong>：本应用点"导入链接" → 粘贴 → 自动解析</li>
+          <li><strong>测速</strong>：点"测速"按钮看哪个节点最快（绿色 = 快）</li>
+          <li><strong>启动 xray</strong>：点"▶ 启动"按钮（绿色）</li>
+          <li><strong>配置代理</strong>：
+            <ul style="padding-left:20px;margin-top:4px">
+              <li><strong>本机用</strong>：浏览器/系统代理指向 <code>127.0.0.1:10809</code>（HTTP）或 <code>10808</code>（SOCKS5）</li>
+              <li><strong>局域网其他设备用</strong>：代理地址填 <code>192.168.2.132:10809</code>（飞牛 IP）</li>
+            </ul>
+          </li>
+          <li><strong>验证</strong>：访问 <a href="https://api.ipify.org" target="_blank" style="color:var(--primary)">api.ipify.org</a> 看 IP 是否变成境外</li>
+        </ol>
+
+        <h4 style="margin:24px 0 12px">🔧 进阶功能</h4>
+        <ul style="padding-left:24px;line-height:2">
+          <li><strong>with-proxy 命令行代理</strong>：让 NAS 自身的命令行（如 ssh 出去、curl）也走代理，<strong>不动系统</strong>、100% 可回滚</li>
+          <li><strong>节点健康检查</strong>：后台每 5 分钟自动 ping，失败 3 次自动禁用</li>
+          <li><strong>配置导入/导出</strong>：备份你的节点配置到 JSON 文件，换设备/重装时恢复</li>
+          <li><strong>崩溃守护</strong>：xray 异常退出后 5s 自动重启</li>
+        </ul>
+
+        <div style="background:var(--tag-bg);padding:12px 16px;border-radius:8px;margin-top:20px;font-size:13px;opacity:.85">
+          <strong>📚 更多文档</strong>：<a href="https://github.com/XTLS/Xray-core" target="_blank" style="color:var(--primary)">Xray-core 官方</a> ·
+          <a href="https://www.v2fly.org/" target="_blank" style="color:var(--primary)">v2fly 文档</a> ·
+          本应用内"设置"→"更新日志"看版本变更
+        </div>
+
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+// v1.3.0+ 测试节点延迟
+async function testNodeLatency(tag) {
+  const cell = document.getElementById('latency-' + tag);
+  if (!cell) return;
+  const oldHtml = cell.innerHTML;
+  cell.innerHTML = '<span style="color:#999">⏱</span>';
+  try {
+    const r = await fetch('/api/nodes/' + encodeURIComponent(tag) + '/test', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      const ms = d.tcp_ms;
+      let color = '#34a853';  // < 200ms 绿
+      if (ms > 500) color = '#ea4335';  // > 500ms 红
+      else if (ms > 200) color = '#fbbc04';  // 200-500 黄
+      cell.innerHTML = '<span style="color:' + color + ';font-weight:600">' + ms + ' ms</span><br><span style="color:#999;font-size:11px">' + d.tcp_min + '-' + d.tcp_max + 'ms</span>';
+    } else {
+      cell.innerHTML = '<span style="color:#ea4335" title="' + escapeHtml(d.error || '') + '">❌</span>';
+    }
+  } catch (e) {
+    cell.innerHTML = oldHtml;
+    showToast('测试失败: ' + e.message, 'error');
+  }
+}
+
+// v1.13.0+ 批量测速 + 自动切换最优
+async function testAllNodes() {
+  const btn = document.getElementById('testAllBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏱ 测速中...'; }
+  try {
+    const r = await fetch('/api/nodes/test-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await r.json();
+    if (!d.ok) { showToast(d.error || '批量测速失败', 'error'); return; }
+    if (d.results.length === 0) { showToast('没有可测速的节点', 'info'); return; }
+    const ok = d.results.filter(x => x.ok);
+    const top = ok.slice(0, 3).map(x => x.tag + ' (' + x.ms + 'ms)').join(', ');
+    showToast('✅ 测速完成：' + ok.length + '/' + d.results.length + ' 可用 | 最快：' + top, 'success');
+    // 刷新节点表（更新延迟列）
+    await loadConfig();
+    // 刷新最优显示
+    await loadOptimalNode();
+  } catch (e) {
+    showToast('批量测速失败: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ 全部测速'; }
+  }
+}
+
+async function loadOptimalNode() {
+  try {
+    const r = await fetch('/api/auto-select');
+    const d = await r.json();
+    if (!d.ok) return;
+    const elTag = document.getElementById('optimalNode');
+    const elAvg = document.getElementById('optimalAvg');
+    const elCb = document.getElementById('autoSelectEnabled');
+    if (elTag) elTag.textContent = d.optimal || '(无)';
+    if (elAvg) elAvg.textContent = d.optimalAvg != null ? '· ' + Math.round(d.optimalAvg) + 'ms 平均' : '';
+    if (elCb && d.config) elCb.checked = !!d.config.enabled;
+  } catch (_) { /* 静默 */ }
+}
+
+async function toggleAutoSelect(enabled) {
+  try {
+    const r = await fetch('/api/auto-select/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(enabled ? '🤖 已开启自动切换' : '⏸ 已关闭自动切换', 'success');
+    } else {
+      showToast(d.error || '设置失败', 'error');
+    }
+  } catch (e) { showToast('设置失败: ' + e.message, 'error'); }
+}
+
+async function switchToOptimalNow() {
+  try {
+    const r = await fetch('/api/auto-select/now', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('🎯 已切换到最优: ' + d.optimal + ' (' + Math.round(d.result.avg) + 'ms)', 'success');
+      await loadConfig();
+      await loadOptimalNode();
+    } else {
+      showToast(d.error || '切换失败', 'error');
+    }
+  } catch (e) { showToast('切换失败: ' + e.message, 'error'); }
+}
+
+// v1.13.0+ 节点延迟历史弹窗
+let _historyChart = null;
+let _historyTag = null;
+let _historyHours = 168;
+
+async function openHistoryModal(tag) {
+  _historyTag = tag;
+  _historyHours = 168;
+  document.getElementById('historyTitle').textContent = '延迟历史 - ' + tag;
+  document.getElementById('historyModal').classList.add('active');
+  await loadHistoryChart(168);
+}
+
+function closeHistoryModal() {
+  document.getElementById('historyModal').classList.remove('active');
+  if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+}
+
+async function loadHistoryChart(hours) {
+  _historyHours = hours;
+  // 高亮当前选中的按钮
+  document.getElementById('historyBtn24').style.background = hours === 24 ? 'var(--accent)' : '';
+  document.getElementById('historyBtn24').style.color = hours === 24 ? '#fff' : '';
+  document.getElementById('historyBtn168').style.background = hours === 168 ? 'var(--accent)' : '';
+  document.getElementById('historyBtn168').style.color = hours === 168 ? '#fff' : '';
+  try {
+    const r = await fetch('/api/nodes/' + encodeURIComponent(_historyTag) + '/history?hours=' + hours);
+    const d = await r.json();
+    if (!d.ok) { showToast(d.error || '加载历史失败', 'error'); return; }
+    const list = d.history || [];
+    const stats = document.getElementById('historyStats');
+    if (list.length === 0) {
+      stats.textContent = '暂无数据';
+      if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+      return;
+    }
+    const ok = list.filter(p => p.ok && p.ms != null);
+    const failed = list.filter(p => !p.ok);
+    const avg = ok.length ? Math.round(ok.reduce((a, p) => a + p.ms, 0) / ok.length) : 0;
+    const min = ok.length ? Math.min(...ok.map(p => p.ms)) : 0;
+    const max = ok.length ? Math.max(...ok.map(p => p.ms)) : 0;
+    stats.innerHTML = '样本 <strong>' + list.length + '</strong> · 成功 <strong style="color:#34a853">' + ok.length + '</strong> · 失败 <strong style="color:#ea4335">' + failed.length + '</strong><br>平均 <strong>' + avg + '</strong>ms · 最小 <strong>' + min + '</strong>ms · 最大 <strong>' + max + '</strong>ms';
+
+    // 准备数据：失败点用 null（Chart.js 会断线）
+    const points = list.map(p => ({ x: p.t, y: p.ok ? p.ms : null }));
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    if (_historyChart) _historyChart.destroy();
+    _historyChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: _historyTag + ' 延迟 (ms)',
+          data: points,
+          borderColor: '#4285f4',
+          backgroundColor: 'rgba(66, 133, 244, 0.1)',
+          fill: true,
+          tension: 0.2,
+          pointRadius: list.length > 200 ? 0 : 2,
+          spanGaps: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: {
+              color: '#999',
+              maxTicksLimit: 8,
+              callback: function(v) {
+                const d = new Date(v);
+                return hours <= 24
+                  ? String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+                  : (d.getMonth() + 1) + '-' + String(d.getDate()).padStart(2, '0');
+              }
+            },
+            grid: { color: 'rgba(0,0,0,.05)' }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#999', callback: function(v) { return v + 'ms'; } },
+            grid: { color: 'rgba(0,0,0,.05)' }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function(items) { return new Date(items[0].parsed.x).toLocaleString('zh-CN'); },
+              label: function(ctx) { return ctx.parsed.y + 'ms'; }
+            }
+          }
+        }
+      }
+    });
+  } catch (e) { showToast('加载历史失败: ' + e.message, 'error'); }
+}
+
+async function toggleNode(tag, enabled) {
+  try {
+    const r = await fetch('/api/nodes/' + encodeURIComponent(tag) + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) });
+    const d = await r.json();
+    if (!d.ok) showToast(d.error || '操作失败', 'error');
+    await loadConfig();
+  } catch(e) { showToast('操作失败', 'error'); }
+}
+
+function openAddModal() {
+  editingTag = null;
+  document.getElementById('modalTitle').textContent = '添加节点';
+  ['fRemark','fAddress','fId','fWsPath','fGrpcService','fSni','fCustomJson','fGroup'].forEach(function(id){ document.getElementById(id).value = ''; });
+  document.getElementById('fPort').value = '443';
+  document.getElementById('fProtocol').value = 'vless';
+  document.getElementById('fNetwork').value = 'ws';
+  document.getElementById('fEncryption').value = 'none';
+  document.getElementById('fTls').value = 'tls';
+  switchTab('form');
+  updateFormByProtocol();
+  updateFormByNetwork();
+  updateTlsFields();
+  document.getElementById('nodeModal').classList.add('active');
+}
+
+function editNode(tag) {
+  const node = (currentConfig && currentConfig.outbounds || []).find(function(n){ return n.tag === tag; });
+  if (!node) return showToast('节点不存在', 'error');
+  editingTag = tag;
+  document.getElementById('modalTitle').textContent = '编辑：' + (node.remark || tag);
+  document.getElementById('fRemark').value = node.remark || '';
+  document.getElementById('fGroup').value = node.group || '';  // v1.9.0+ 分组
+  document.getElementById('fProtocol').value = node.protocol || 'vless';
+  document.getElementById('fNetwork').value = (node.streamSettings && node.streamSettings.network) || 'tcp';
+  const enc = (node.settings && node.settings.vnext && node.settings.vnext[0] && node.settings.vnext[0].users && node.settings.vnext[0].users[0] && node.settings.vnext[0].users[0].encryption)
+            || (node.settings && node.settings.servers && node.settings.servers[0] && node.settings.servers[0].method)
+            || 'none';
+  document.getElementById('fEncryption').value = enc;
+  document.getElementById('fTls').value = (node.streamSettings && node.streamSettings.security) || 'none';
+  document.getElementById('fCustomJson').value = '';
+  const vnext = (node.settings && node.settings.vnext) || [];
+  const servers = (node.settings && node.settings.servers) || [];
+  if (vnext[0]) {
+    document.getElementById('fAddress').value = vnext[0].address || '';
+    document.getElementById('fPort').value = vnext[0].port || '';
+    document.getElementById('fId').value = (vnext[0].users && vnext[0].users[0] && vnext[0].users[0].id) || '';
+  } else if (servers[0]) {
+    document.getElementById('fAddress').value = servers[0].address || '';
+    document.getElementById('fPort').value = servers[0].port || '';
+    document.getElementById('fId').value = servers[0].password || '';
+  } else {
+    document.getElementById('fAddress').value = node.address || '';
+    document.getElementById('fPort').value = node.port || '';
+    document.getElementById('fId').value = '';
+  }
+  document.getElementById('fWsPath').value = (node.streamSettings && node.streamSettings.wsSettings && node.streamSettings.wsSettings.path) || '';
+  document.getElementById('fGrpcService').value = (node.streamSettings && node.streamSettings.grpcSettings && node.streamSettings.grpcSettings.serviceName) || '';
+  const sni = (node.streamSettings && node.streamSettings.tlsSettings && node.streamSettings.tlsSettings.serverName)
+            || (node.streamSettings && node.streamSettings.realitySettings && node.streamSettings.realitySettings.serverName)
+            || '';
+  document.getElementById('fSni').value = sni;
+  switchTab('form');
+  updateFormByProtocol();
+  updateFormByNetwork();
+  updateTlsFields();
+  document.getElementById('nodeModal').classList.add('active');
+}
+
+function updateFormByProtocol() {
+  const proto = document.getElementById('fProtocol').value;
+  document.getElementById('fIdLabel').textContent = proto === 'shadowsocks' ? '密码' : (proto === 'trojan' ? '密码' : 'UUID');
+  document.getElementById('fEncLabel').textContent = proto === 'shadowsocks' ? '加密方式' : '加密';
+}
+
+function updateFormByNetwork() {
+  const net = document.getElementById('fNetwork').value;
+  document.getElementById('fWsGroup').style.display = (net === 'ws') ? 'block' : 'none';
+  document.getElementById('fGrpcGroup').style.display = (net === 'grpc') ? 'block' : 'none';
+}
+
+function updateTlsFields() {
+  const tls = document.getElementById('fTls').value;
+  document.getElementById('fSniGroup').style.display = (tls === 'tls' || tls === 'reality') ? 'block' : 'none';
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.tab === tab); });
+  document.querySelectorAll('.tab-content').forEach(function(c){ c.classList.toggle('active', c.id === 'tab-' + tab); });
+}
+
+async function saveNode() {
+  const activeTab = document.querySelector('.tab.active').dataset.tab;
+  let node;
+  if (activeTab === 'json') {
+    const raw = document.getElementById('fCustomJson').value.trim();
+    if (!raw) return showToast('请填写 JSON', 'error');
+    try { node = JSON.parse(raw); } catch(e) { return showToast('JSON 格式错误: ' + e.message, 'error'); }
+  } else {
+    const proto = document.getElementById('fProtocol').value;
+    const network = document.getElementById('fNetwork').value;
+    const addr = document.getElementById('fAddress').value.trim();
+    const port = parseInt(document.getElementById('fPort').value);
+    const id = document.getElementById('fId').value.trim();
+    const enc = document.getElementById('fEncryption').value;
+    const tls = document.getElementById('fTls').value;
+    const wsPath = document.getElementById('fWsPath').value.trim();
+    const grpcService = document.getElementById('fGrpcService').value.trim();
+    const sni = document.getElementById('fSni').value.trim() || addr;
+    const remark = document.getElementById('fRemark').value.trim();
+    const group = document.getElementById('fGroup').value.trim();
+    if (!addr || !port || !id) return showToast('请填写地址、端口和 UUID/密码', 'error');
+    node = { remark: remark || addr, protocol: proto, settings: {}, streamSettings: { network: network } };
+    // v1.9.0+ 分组
+    if (group) node.group = group;
+    if (tls !== 'none') {
+      node.streamSettings.security = tls;
+      if (tls === 'tls') node.streamSettings.tlsSettings = { serverName: sni, allowInsecure: false };
+      if (tls === 'reality') node.streamSettings.realitySettings = { serverName: sni };
+    }
+    if (network === 'ws' && wsPath) node.streamSettings.wsSettings = { path: wsPath };
+    if (network === 'grpc' && grpcService) node.streamSettings.grpcSettings = { serviceName: grpcService };
+    if (proto === 'vless' || proto === 'vmess') {
+      const user = { id: id, encryption: enc };
+      if (proto === 'vmess') user.alterId = 0;
+      node.settings.vnext = [{ address: addr, port: port, users: [user] }];
+    } else if (proto === 'trojan') {
+      node.settings.servers = [{ address: addr, port: port, password: id }];
+    } else if (proto === 'shadowsocks') {
+      node.settings.servers = [{ address: addr, port: port, password: id, method: enc }];
+    }
+  }
+  try {
+    let url = '/api/nodes';
+    let method = 'POST';
+    if (editingTag) { url += '/' + encodeURIComponent(editingTag); method = 'PUT'; }
+    const r = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(node) });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(editingTag ? '已更新' : '已添加', 'success');
+      closeModal();
+      await loadConfig();
+    } else {
+      showToast(d.error || '保存失败', 'error');
+    }
+  } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+}
+
+function openImportModal() { document.getElementById('fImportLink').value = ''; document.getElementById('importModal').classList.add('active'); }
+function closeImportModal() { document.getElementById('importModal').classList.remove('active'); }
+function closeModal() { editingTag = null; document.getElementById('nodeModal').classList.remove('active'); }
+
+async function importLink() {
+  let text = document.getElementById('fImportLink').value.trim();
+  if (!text) return showToast('请粘贴内容', 'error');
+  // v1.5.0+ 自动识别 base64 编码的订阅内容（v2rayN / clash 格式）
+  // 如果首行不含协议头，尝试 base64 解码
+  if (!/^(vless|vmess|ss|trojan):\/\//.test(text.split('\n')[0].trim())) {
+    try {
+      const cleaned = text.replace(/\s+/g, '');
+      const decoded = atob(cleaned);
+      if (decoded.includes('://')) {
+        text = decoded;
+        showToast('已自动识别为 base64 订阅', 'success');
+      }
+    } catch (_) {
+      // 不是 base64 也不含协议头 → 当作普通文本
+    }
+  }
+  const links = text.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+  let success = 0, failed = 0;
+  for (const link of links) {
+    try {
+      const r = await fetch('/api/parse-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link: link }) });
+      const d = await r.json();
+      if (d.ok && d.node) {
+        const r2 = await fetch('/api/nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d.node) });
+        const d2 = await r2.json();
+        if (d2.ok) success++; else failed++;
+      } else failed++;
+    } catch(e) { failed++; }
+  }
+  showToast('导入完成: 成功 ' + success + '，失败 ' + failed, failed > 0 ? 'warning' : 'success');
+  closeImportModal();
+  await loadConfig();
+}
+
+async function openSettingsModal() {
+  document.getElementById('settingsModal').classList.add('active');
+  // v1.4.2+ 修复：默认填入当前实际在用的 xray 路径（来自 /api/status），避免显示 /usr/local/bin/xray + "✗ 未找到"
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    if (d && d.binary) {
+      const cur = document.getElementById('fXrayPath').value.trim();
+      if (!cur || cur === '/usr/local/bin/xray') {
+        document.getElementById('fXrayPath').value = d.binary;
+      }
+    }
+  } catch (_) {}
+  detectXray();
+}
+function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('active'); }
+
+function toggleChangelog(label) {
+  const c = document.getElementById('changelogContent');
+  const icon = label.querySelector('.collapse-icon');
+  if (c.style.display === 'none') {
+    c.style.display = 'block';
+    if (icon) icon.style.transform = 'rotate(0deg)';
+  } else {
+    c.style.display = 'none';
+    if (icon) icon.style.transform = 'rotate(-90deg)';
+  }
+}
+
+function toggleWithProxyHelp(label) {
+  const c = document.getElementById('withProxyHelp');
+  const icon = label.querySelector('.collapse-icon');
+  if (c.style.display === 'none') {
+    c.style.display = 'block';
+    if (icon) icon.style.transform = 'rotate(0deg)';
+  } else {
+    c.style.display = 'none';
+    if (icon) icon.style.transform = 'rotate(-90deg)';
+  }
+}
+
+async function detectXray() {
+  const p = document.getElementById('fXrayPath').value.trim();
+  try {
+    const r = await fetch('/api/detect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+    const d = await r.json();
+    const hint = document.getElementById('fXrayHint');
+    if (d.found) hint.innerHTML = '<span style="color:#34a853">✓ 找到: ' + escapeHtml(d.path) + '</span>';
+    else hint.innerHTML = '<span style="color:#ea4335">✗ 未找到</span>';
+  } catch(e) { showToast('检测失败', 'error'); }
+}
+
+async function saveSettings() {
+  showToast('设置已保存（需重启代理生效）', 'success');
+  closeSettingsModal();
+}
+
+// v1.9.0+ 配置导入/导出/重置
+async function exportConfig() {
+  // v1.13.0+ 加密压缩选项
+  const useEncrypt = confirm('📥 导出配置\n\n是否加密？\n点"确定"=AES-256 加密（需要输入密码）\n点"取消"=明文导出');
+  let password = null;
+  if (useEncrypt) {
+    password = prompt('请输入密码（至少 8 位）：');
+    if (!password || password.length < 8) { showToast('密码至少 8 位', 'error'); return; }
+    const p2 = prompt('再次输入密码：');
+    if (password !== p2) { showToast('两次密码不一致', 'error'); return; }
+  }
+  const useCompress = confirm('是否 gzip 压缩？\n点"确定"=压缩（建议）\n点"取消"=不压缩');
+  try {
+    const params = [];
+    if (password) params.push('password=' + encodeURIComponent(password));
+    if (useCompress) params.push('compress=true');
+    const url = '/api/backup/export' + (params.length ? '?' + params.join('&') : '');
+    const r = await fetch(url);
+    const d = await r.json();
+    if (!d.ok) { showToast(d.error || '导出失败', 'error'); return; }
+    // 文件名后缀：明文 .json，加密 .enc.json，压缩 .gz.json
+    let suffix = '.json';
+    if (password) suffix = '.enc' + suffix;
+    if (useCompress) suffix = '.gz' + suffix;
+    const blob = new Blob([JSON.stringify(d.data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'xray-proxy-native-backup-' + new Date().toISOString().slice(0, 10) + suffix;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    const tag = (password ? '加密' : '明文') + (useCompress ? '+压缩' : '');
+    showToast('配置已导出（' + tag + '）', 'success');
+  } catch (e) { showToast('导出失败: ' + e.message, 'error'); }
+}
+
+async function importConfig(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (!confirm('导入会覆盖当前配置（先自动备份为 .import-bak）。确定？')) {
+    ev.target.value = '';
+    return;
+  }
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    // v1.13.0+ 检测加密包 → 弹窗输入密码
+    let password = null;
+    if (data.encrypted) {
+      password = prompt('🔐 检测到加密备份，请输入密码：');
+      if (!password) { showToast('已取消（加密包需要密码）', 'info'); ev.target.value = ''; return; }
+    }
+    const includeTraffic = confirm('是否同时导入流量统计？\n（点取消则只导入 config + auth）');
+    const r = await fetch('/api/backup/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, password, options: { includeTraffic } })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('导入成功: ' + d.imported.join(', ') + '（需重启 xray 生效）', 'success');
+      // 刷新 token 显示
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showToast(d.error || '导入失败', 'error');
+    }
+  } catch (e) { showToast('导入失败: ' + e.message, 'error'); }
+  ev.target.value = '';
+}
+
+async function resetConfig() {
+  if (!confirm('⚠️ 重置将删除 config + traffic（保留 token 和 xray 二进制）。\n确定？')) return;
+  if (!confirm('再次确认：此操作不可撤销（当前配置会备份为 .import-bak）。\n真要重置？')) return;
+  try {
+    const r = await fetch('/api/backup/reset', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) { showToast('已重置（需重启 xray 生效）', 'success'); setTimeout(() => location.reload(), 1500); }
+    else showToast(d.error || '重置失败', 'error');
+  } catch (e) { showToast('重置失败: ' + e.message, 'error'); }
+}
+
+async function deleteNode(tag) {
+  // v1.7.4+ 系统节点保护（前端预检，避免无谓请求）
+  if (SYSTEM_NODE_TAGS.includes(tag)) {
+    showToast('系统节点「' + tag + '」不可删除（用于路由规则、xray 内部 API）', 'error');
+    return;
+  }
+  if (!confirm('确定删除节点「' + tag + '」？')) return;
+  try {
+    const r = await fetch('/api/nodes/' + encodeURIComponent(tag), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) { showToast('已删除', 'success'); await loadConfig(); }
+    else showToast(d.error || '删除失败', 'error');
+  } catch(e) { showToast('删除失败', 'error'); }
+}
+
+// v1.10.0+ SSE 实时日志（替代 5s 轮询）
+let _logSSE = null;
+function startLogSSE() {
+  if (_logSSE) { try { _logSSE.close(); } catch(_) {} }
+  if (!document.getElementById('autoRefreshLog')?.checked) return;
+  try {
+    _logSSE = new EventSource('/api/logs/tail');
+    _logSSE.onmessage = function(e) {
+      try {
+        const d = JSON.parse(e.data);
+        const box = document.getElementById('logBox');
+        if (!box) return;
+        if (d.type === 'history') {
+          box.textContent = d.content || '(空)';
+        } else if (d.type === 'append') {
+          box.textContent += d.content;
+          // 限制最多 2000 行
+          const lines = box.textContent.split('\n');
+          if (lines.length > 2000) box.textContent = lines.slice(-2000).join('\n');
+        } else if (d.type === 'rotated') {
+          box.textContent = '(日志已轮转)';
+        }
+        // 自动滚动到底
+        box.scrollTop = box.scrollHeight;
+      } catch (_) {}
+    };
+    _logSSE.onerror = function() {
+      // 浏览器会自动重连
+    };
+  } catch (e) { console.error('SSE 失败:', e); }
+}
+
+async function loadLogs() {
+  // 兼容旧 API（手动刷新时调用）
+  const lines = document.getElementById('logLines').value;
+  try {
+    const r = await fetch('/api/logs?lines=' + lines);
+    const d = await r.json();
+    if (d.ok) document.getElementById('logBox').textContent = d.logs || '(空)';
+  } catch(_) {}
+}
+
+async function rotateLogs() {
+  if (!confirm('确定轮转日志？将归档当前日志文件')) return;
+  try {
+    const r = await fetch('/api/logs/rotate', { method: 'POST' });
+    const d = await r.json();
+    showToast(d.ok ? d.msg : d.error, d.ok ? 'success' : 'error');
+    loadLogs();
+  } catch(e) { showToast('操作失败', 'error'); }
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(function(){ t.className = 'toast'; }, 3000);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+document.getElementById('nodeModal').addEventListener('click', function(e){ if (e.target === this) closeModal(); });
+document.getElementById('importModal').addEventListener('click', function(e){ if (e.target === this) closeImportModal(); });
+document.getElementById('settingsModal').addEventListener('click', function(e){ if (e.target === this) closeSettingsModal(); });
+</script>
+
+</div><!-- /main-page -->
+
+<script>
+// ====== v1.3.0+ 鉴权：fetch 拦截 + 登录管理 ======
+const TOKEN_KEY = 'xpn_token_v1';
+const origFetch = window.fetch.bind(window);
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+
+function showLogin(msg) {
+  setToken(null);
+  document.getElementById('login-page').style.display = 'flex';
+  document.getElementById('main-page').style.display = 'none';
+  if (msg) document.getElementById('login-error').textContent = msg;
+  updateLoginBtnState();
+}
+function showMain() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('main-page').style.display = 'block';
+}
+
+// v1.3.1+ 实时更新登录按钮状态（input 字符数 / 32 时启用，<32 禁用）
+// 防止手机 WebView 粘贴截断 / 输入不完整时无感知地点登录
+function updateLoginBtnState() {
+  const input = document.getElementById('login-token');
+  const counter = document.getElementById('login-counter');
+  const btn = document.getElementById('login-btn');
+  if (!input || !counter || !btn) return;
+  // trim 去除首尾空白（粘贴时常带入）
+  const raw = input.value || '';
+  const v = raw.replace(/\s+/g, '');  // base64url 不含空白，所有空白一律当作噪音剔除
+  const len = v.length;
+  counter.textContent = `${len}/32 字符` + (raw !== v ? ` (含 ${raw.length - v.length} 个空白已剔除)` : '');
+  counter.style.color = len === 32 ? '#34a853' : (len > 0 ? '#fbbc04' : '#999');
+  if (len === 32) {
+    btn.disabled = false;
+    btn.style.background = '#1a73e8';
+    btn.style.cursor = 'pointer';
+  } else {
+    btn.disabled = true;
+    btn.style.background = '#9e9e9e';
+    btn.style.cursor = 'not-allowed';
+  }
+  // 同步真实 input.value（去掉空白），防止后端 trim 不到位
+  if (v !== raw && len > 0) {
+    input.value = v;
+  }
+}
+
+window.fetch = function(input, init) {
+  init = init || {};
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
+  // 给所有 /api/* 路由（除 /api/auth/* 自身）加 Bearer Token
+  if (url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
+    const token = getToken();
+    if (token) {
+      init.headers = Object.assign({}, init.headers || {}, { 'Authorization': 'Bearer ' + token });
+    }
+  }
+  return origFetch(input, init).then(r => {
+    // 401 → 跳登录页（[v1.4.0+ 调试增强] showLogin 传入详细 URL + status）
+    if (r.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
+      showLogin(`Token 错误或已变更（HTTP 401 @ ${url}），请重新登录`);
+    }
+    // 503 + need_wait → 还在初始化（[v1.4.0+] 调 showLogin 让用户看到明确的等待提示）
+    if (r.status === 503 && url.startsWith('/api/')) {
+      r.clone().json().then(d => {
+        if (d && d.need_wait) {
+          showLogin('应用启动中，Token 还没生成，请等待 5 秒后重试');
+        }
+      }).catch(()=>{});
+    }
+    return r;
+  }).catch(e => {
+    // [v1.4.0+ 调试增强] 网络错误也显示到 #login-error
+    if (url.startsWith('/api/')) {
+      const errEl = document.getElementById('login-error');
+      if (errEl) errEl.textContent = `❌ 网络错误: ${e.message}（${url}）`;
+    }
+    throw e;
+  });
+};
+
+async function doLogin() {
+  const token = (document.getElementById('login-token').value || '').trim();
+  const errEl = document.getElementById('login-error');
+  if (!token) { errEl.textContent = '请输入 Token'; return; }
+  if (token.length !== 32) { errEl.textContent = `Token 长度 ${token.length} ≠ 32，请检查粘贴是否完整`; return; }
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true; btn.textContent = '验证中...';
+  errEl.textContent = `[登录] 发送 token (前 4 位 ${token.slice(0,4)}, 末 4 位 ${token.slice(-4)}, 长 ${token.length})…`;
+  try {
+    const r = await origFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    if (r.ok) {
+      errEl.textContent = '[登录] 后端返回 200，进入主界面…';
+      setToken(token);
+      showMain();
+      init();  // 登录成功 → 启动主界面
+    } else {
+      // [v1.4.0+] 详细错误：HTTP 状态码 + 后端返回的 error
+      const body = await r.text().catch(()=> '');
+      errEl.textContent = `Token 错误（HTTP ${r.status}）: ${body || '(后端无返回)'}`;
+      btn.disabled = false; btn.textContent = '登录';
+      updateLoginBtnState();  // 根据当前字符数决定按钮是否启用
+    }
+  } catch (e) {
+    errEl.textContent = '❌ 登录网络错误: ' + e.message;
+    btn.disabled = false; btn.textContent = '登录';
+    updateLoginBtnState();
+  }
+}
+
+// 启动检查：判断显示登录页还是主界面
+(async function bootstrap() {
+  document.getElementById('login-page').style.display = 'none';  // 先隐藏避免闪烁
+  document.getElementById('main-page').style.display = 'none';
+  try {
+    // [v1.4.0+ 调试增强] 分步输出到 #login-error，方便用户精确定位问题
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '[1/3] 检查后端鉴权状态…';
+    // 1) 后端是否就绪（用 fetch 走拦截器，让 503 错误统一处理）
+    const checkR = await fetch('/api/auth/check');
+    const checkD = await checkR.json();
+    if (!checkD.initialized) {
+      document.getElementById('auth-hint-path').textContent = checkD.path || '/vol3/@appdata/xray-proxy-native/auth.json';
+      errEl.textContent = '[1/3] 后端鉴权未初始化，5 秒后重试…';
+      showLogin();
+      // 5 秒后重试
+      setTimeout(bootstrap, 5000);
+      return;
+    }
+    document.getElementById('auth-hint-path').textContent = checkD.path;
+    // 2) 是否有本地缓存的 token
+    const token = getToken();
+    if (token) {
+      errEl.textContent = `[2/3] 本地有 token（长 ${token.length}，前 4 位 ${token.slice(0, 4)}），验证中…`;
+      // 尝试用缓存 token 调一个 API 验证（用 fetch 让拦截器自动加头）
+      const probeR = await fetch('/api/status');
+      if (probeR.ok) {
+        errEl.textContent = '';
+        showMain();
+        init();
+        return;
+      }
+      errEl.textContent = `[2/3] 本地 token 失效（HTTP ${probeR.status}），需重新登录`;
+    } else {
+      errEl.textContent = '[2/3] 本地无 token，请输入 Token 登录';
+    }
+    // 3) 跳登录页
+    showLogin();
+  } catch (e) {
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = `❌ 无法连接后端: ${e.message}（请检查网络或应用是否启动）`;
+    showLogin();
+    setTimeout(bootstrap, 3000);
+  }
+})();
+
+// 登录按钮事件
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('login-token').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+</script>
+</body>
+</html>
