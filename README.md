@@ -46,11 +46,7 @@
 - **Token 鉴权**：内置 auth.js，首次启动生成
 - **加密压缩导入导出**：AES-256-GCM + PBKDF2-SHA256(100k) + gzip
 - **崩溃守护**：进程异常 5s 自动重启
-- **命令行代理工具 with-proxy**：LD_PRELOAD 注入 `libproxychains4.so` 的进程级代理包裹器
-  - **不动系统**：不修改 `LD_LIBRARY_PATH` / `/etc/ld.so.conf` / 任何环境变量，100% 用户态
-  - **100% 可回滚**：删除 `bin/` 目录即可完全恢复（无系统级副作用）
-  - **用法**：`with-proxy curl https://www.google.com` / `with-proxy ./deploy.sh` / `with-proxy npm install`
-  - **详见**下方 [使用说明](#使用说明) 段的 `with-proxy` 章节
+- **🎯 核心：命令行代理 with-proxy**：让所有命令行工具（apt / git / curl / npm / pip / ssh / scp 等）走面板代理。**Web UI 跑通 ≠ 命令行能上网**——本应用正是为解决这一痛点而设计。LD_PRELOAD 注入 + 不动系统 + 100% 可回滚。详见下方 [`with-proxy` 章节](#命令行代理-with-proxy本应用核心)
 
 ---
 
@@ -165,16 +161,120 @@ Web UI → 备份恢复：
 
 > 💡 加密文件**向后兼容**：v1.12.0 之前的明文/压缩格式仍可导入。
 
-### 命令行代理
+### 命令行代理 with-proxy（本应用核心）
+
+**为什么这是核心？**
+
+xray-proxy-native 在 Web UI 跑通后，只解决了"面板能开"的问题。但 fnOS 上跑的命令行工具（`apt`、`git`、`curl`、`npm`、`pip`、`wget`、`apt-get update` 等）**默认不走面板代理**——它们各自发起 TCP 连接，绕过 xray。
+
+不使用 `with-proxy` 的话：
+- Web UI 看着一切正常（面板是好的）
+- 但 `curl https://www.google.com` 仍然连接超时
+- `apt update` 仍然连不上源
+- `git clone https://github.com/xxx` 仍然被墙
+- 整个应用对命令行场景**形同虚设**
+
+`with-proxy` 是一个**进程级代理包裹器**：通过 `LD_PRELOAD` 注入 48KB 的 `libproxychains4.so`，**劫持** `connect()` / `getaddrinfo()` 系统调用，让被包裹命令的所有 TCP 流量**自动**走 xray SOCKS5（`127.0.0.1:10808`）。
+
+#### 支持的命令（一切尊重 LD_PRELOAD 的 C/C++ 程序）
+
+| 类别 | 命令 | 典型场景 |
+|:-----|:-----|:--------|
+| 下载工具 | `curl` / `wget` / `aria2c` / `axel` | 拉取外网文件、镜像 |
+| Git/版本控制 | `git` / `svn` / `hg` | clone 仓库、pull 提交 |
+| 包管理器 | `apt` / `apt-get` / `pip` / `pip3` / `npm` / `yarn` / `pnpm` / `gem` / `cargo` / `go` | 装外网包 |
+| 网络工具 | `ncat` / `netcat` / `socat` / `ssh` / `scp` / `rsync` / `telnet` | 端口测试、远程同步 |
+| 下载器 | `qBittorrent`（noxvfb）/ `Aria2` / `Transmission` / `Vuze` | BT/PT 下载 |
+| 其他 | 任何用 glibc 的二进制 | 自编译工具、内置命令 |
+
+**使用示例**：
 
 ```bash
-# 包裹任意命令走代理
-with-proxy curl https://www.google.com
+# 下载工具
+with-proxy curl https://api.ipify.org        # 看出口 IP（应显示海外）
+with-proxy wget https://github.com/xxx.tar.gz
 
-# 包裹脚本
-with-proxy ./deploy.sh
+# Git
+with-proxy git clone https://github.com/xxx/yyy.git
+with-proxy git pull origin main
+
+# 包管理器
+with-proxy apt update && with-proxy apt install xxx
+with-proxy pip install --user xxx
+with-proxy npm install -g xxx
+
+# 综合：整个脚本都走代理
+with-proxy bash deploy.sh
 ```
-底层用 `LD_PRELOAD` 注入 `libproxychains4.so`，**不修改**系统配置，**不污染** `LD_LIBRARY_PATH` 环境。100% 可回滚。
+
+#### 不支持的场景（务必了解）
+
+| 场景 | 原因 |
+|:-----|:-----|
+| **Docker 守护进程** | Docker 用 Go 写，Go runtime 忽略 LD_PRELOAD（用 nsenter + iptables） |
+| **飞牛官方应用**（套件中心装的） | 大多 Go 实现，LD_PRELOAD 注入无效 |
+| **Chromium / Firefox / Chrome** | 浏览器有自己的网络栈，不走 `connect()` |
+| **Electron 应用** | 内部用 Node.js，DNS 走 mDNS / DoH，绕过系统调用 |
+| **UDP 流量** | LD_PRELOAD 只劫持 `connect()`，不劫持 `sendto()` |
+| **原始 IP 连接** | `connect(2)` 走 IP 而非域名，proxychains 无法识别 |
+| **IPv6 流量** | proxychains-ng v4.x 对 IPv6 支持不完整 |
+
+#### 网络与权限要求
+
+- **xray 必须在跑**（装上应用后默认自动启动 xray + 至少 1 个可用节点）
+- **SOCKS5 端口**：`127.0.0.1:10808`（仅本机回环，不对外暴露）
+- **DNS**：proxychains 默认在**远端**解析（`proxy_dns`），防 DNS 污染
+- **用户权限**：
+  - `xray_proxy` 用户：直接 `with-proxy <cmd>` 即可
+  - 其他用户：`sudo -u xray_proxy -E with-proxy <cmd>`（`-E` 保留环境变量）
+- **localnet 排除**：`127.0.0.0/8` / `10.0.0.0/8` / `172.16.0.0/12` / `192.168.0.0/16` 自动不走代理
+
+#### 安全机制（核心承诺）
+
+- **不动 iptables**：不修改系统防火墙规则
+- **不动 /etc**：不写系统配置
+- **不动 systemd**：不注册服务
+- **不污染 LD_LIBRARY_PATH**：用完即弃
+- **停用本应用 = with-proxy 立即失效**：xray 不跑 → 10808 没人监听 → 命令直接连接失败（不会"假阳性"误判为成功）
+- **100% 可回滚**：卸载本应用后，所有 with-proxy 组件（`bin/with-proxy`、`libproxychains4.so` 等）一并删除，系统回到装之前
+
+#### 原理
+
+```
+[被 with-proxy 包裹的命令]
+   ↓ LD_PRELOAD=libproxychains4.so
+   ↓ 劫持 connect() / getaddrinfo()
+   ↓ 把"目标 IP:Port"改成"socks5 127.0.0.1:10808 + 原始目标"
+   ↓
+[xray SOCKS5 inbound (tag: socks-in)]
+   ↓ 按路由规则
+   ↓ 国内域名/IP → direct
+   ↓ 国外域名/IP → proxy (vless node)
+   ↓
+[外网节点] → 目标网站
+```
+
+#### 常见问题
+
+| 问题 | 原因 + 解决 |
+|:-----|:-----------|
+| `with-proxy curl https://google.com` 报 `connection refused` | xray 没启动。Web UI 启动 xray 后重试 |
+| `with-proxy` 后命令卡住无输出 | xray 节点失效。Web UI 测速换节点 |
+| `with-proxy` 不生效，命令直接走外网 | LD_PRELOAD 被 Go runtime 或容器逃逸跳过。Go 应用别用 with-proxy |
+| `with-proxy apt update` 仍然超时 | apt 子进程（apt-get / dpkg）也需包裹。脚本统一 `with-proxy bash` 包 |
+| 想**全局**注入 LD_PRELOAD | `source /var/apps/xray-proxy-native/bin/enable-proxy.sh`（仅当前 shell 临时生效） |
+
+#### enable-proxy.sh（高级）
+
+如果你想在**当前 shell 会话**临时全局注入 LD_PRELOAD（所有命令都走 xray）：
+
+```bash
+source /var/apps/xray-proxy-native/bin/enable-proxy.sh
+# 该会话内所有命令自动走 xray
+# 关闭 shell 或新开会话自动失效
+```
+
+> ⚠️ **警告**：不要 `export LD_PRELOAD=...` 写到 `~/.bashrc` —— 这会导致 xray 卸载后所有命令崩溃。
 
 ---
 
