@@ -197,16 +197,43 @@ table tbody tr:hover{background:var(--tag-bg)}
 </style>
 </head>
 <body>
-<!-- 登录页（首次访问/Token 失效时显示） -->
+<!-- v1.15.0+ 三态登录页：setup（首设密码）/ password（账号密码登录）/ token（备用 Token 登录） -->
+<!-- 三个区域共用一个 #login-page 外壳，JS 根据 /api/auth/status 切换显示 -->
 <div id="login-page" style="display:none;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a73e8,#1557b0)">
   <div style="background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);max-width:480px;width:90%">
-    <h2 style="margin:0 0 8px;color:#1a73e8">🔐 xray-proxy-native</h2>
-    <p style="color:#666;margin-bottom:24px;font-size:14px;line-height:1.6">轻量级 xray 代理管理面板 · Token 鉴权登录<br>首次访问请从应用启动日志 <code>info.log</code> 复制 Token。</p>
-    <div style="background:#f5f5f5;padding:12px;border-radius:6px;font-size:12px;color:#666;margin-bottom:16px;font-family:monospace;word-break:break-all" id="auth-hint">Token 路径：<span id="auth-hint-path">-</span></div>
-    <input type="text" id="login-token" placeholder="粘贴 32 字符 Token" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:monospace;font-size:14px;margin-bottom:6px;box-sizing:border-box" autocomplete="off" spellcheck="false" oninput="updateLoginBtnState()">
-    <div id="login-counter" style="font-size:12px;color:#999;margin-bottom:12px;text-align:right">0/32 字符</div>
-    <button id="login-btn" style="width:100%;padding:12px;background:#9e9e9e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed" disabled>登录</button>
-    <div id="login-error" style="color:#ea4335;margin-top:12px;font-size:13px;text-align:center;min-height:18px"></div>
+
+    <!-- 子区域 1：首次设置密码（setup_needed 状态） -->
+    <div id="login-setup" style="display:none">
+      <h2 style="margin:0 0 8px;color:#1a73e8">🔐 设置管理密码</h2>
+      <p style="color:#666;margin-bottom:24px;font-size:14px;line-height:1.6">首次访问请设置管理密码（≥ 6 字符）。<br>密码会用于账号密码登录 + 刷新 Access Token。</p>
+      <input type="password" id="setup-pwd1" placeholder="新密码（≥ 6 字符）" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box" autocomplete="new-password" oninput="updateSetupBtnState()">
+      <input type="password" id="setup-pwd2" placeholder="再次输入密码" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box" autocomplete="new-password" oninput="updateSetupBtnState()">
+      <button id="setup-btn" style="width:100%;padding:12px;background:#9e9e9e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed" disabled>设置密码并登录</button>
+      <div id="setup-error" style="color:#ea4335;margin-top:12px;font-size:13px;text-align:center;min-height:18px"></div>
+    </div>
+
+    <!-- 子区域 2：账号密码登录（password_set + 无 token 时） -->
+    <div id="login-password" style="display:none">
+      <h2 style="margin:0 0 8px;color:#1a73e8">🔐 xray-proxy-native</h2>
+      <p style="color:#666;margin-bottom:24px;font-size:14px;line-height:1.6">轻量级 xray 代理管理面板 · 账号密码登录</p>
+      <input type="password" id="login-pwd-input" placeholder="管理密码" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box" autocomplete="current-password" oninput="updatePasswordLoginBtnState()" onkeydown="if(event.key==='Enter'){doLoginPassword();}">
+      <button id="login-pwd-btn" style="width:100%;padding:12px;background:#9e9e9e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed" disabled onclick="doLoginPassword()">登录</button>
+      <div id="login-pwd-error" style="color:#ea4335;margin-top:12px;font-size:13px;text-align:center;min-height:18px"></div>
+      <div style="text-align:center;margin-top:16px;font-size:12px"><a href="#" id="show-token-link" style="color:#1a73e8;text-decoration:none">用 Token 登录（备用）</a></div>
+    </div>
+
+    <!-- 子区域 3：Token 登录（v1.14.0 兼容，作为备用通道） -->
+    <div id="login-token-area" style="display:none">
+      <h2 style="margin:0 0 8px;color:#1a73e8">🔐 Token 登录（备用）</h2>
+      <p style="color:#666;margin-bottom:24px;font-size:14px;line-height:1.6">从应用启动日志 <code>info.log</code> 或 <code>auth.json</code> 复制 Token。</p>
+      <div style="background:#f5f5f5;padding:12px;border-radius:6px;font-size:12px;color:#666;margin-bottom:16px;font-family:monospace;word-break:break-all" id="auth-hint">Token 路径：<span id="auth-hint-path">-</span></div>
+      <input type="text" id="login-token" placeholder="粘贴 32 字符 Token" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:monospace;font-size:14px;margin-bottom:6px;box-sizing:border-box" autocomplete="off" spellcheck="false" oninput="updateLoginBtnState()">
+      <div id="login-counter" style="font-size:12px;color:#999;margin-bottom:12px;text-align:right">0/32 字符</div>
+      <button id="login-btn" style="width:100%;padding:12px;background:#9e9e9e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed" disabled onclick="doLoginToken()">登录</button>
+      <div id="login-error" style="color:#ea4335;margin-top:12px;font-size:13px;text-align:center;min-height:18px"></div>
+      <div style="text-align:center;margin-top:16px;font-size:12px"><a href="#" id="show-password-link" style="color:#1a73e8;text-decoration:none">← 返回账号密码登录</a></div>
+    </div>
+
   </div>
 </div>
 
@@ -428,6 +455,122 @@ apt update</pre>
         <p><strong>回滚</strong>：停用本应用 → with-proxy 命令变空壳（连不上 10808）→ 网络 100% 恢复。</p>
       </div>
     </div>
+    <!-- 通知配置 v1.16.0+ -->
+    <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
+      <label style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleNotifyConfig(this)">
+        <span>🔔 通知配置（崩溃 / 节点失效 / 登录锁定自动推送）</span>
+        <span class="collapse-icon" style="transition:transform .2s">▼</span>
+      </label>
+      <div id="notifyConfigContent" style="display:none;margin-top:12px">
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="notifyTgEnabled"> Telegram Bot</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+            <input id="notifyTgToken" placeholder="Bot Token (如 1102...:AAH...)">
+            <input id="notifyTgChatId" placeholder="Chat ID (如 123456789)">
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-outline btn-sm" onclick="testNotifyChannel('telegram')">测试发送</button>
+            <span id="notifyTgTestResult" style="font-size:12px;color:#666"></span>
+          </div>
+          <div class="form-hint">创建 Bot：Telegram 里 @BotFather → /newbot。获取 Chat ID：@GetIDBot</div>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="notifyWwEnabled"> 企业微信 Webhook</label>
+          <input id="notifyWwUrl" placeholder="Webhook URL (如 https://qyapi.weixin.qq.com/...)" style="margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-outline btn-sm" onclick="testNotifyChannel('wechatWork')">测试发送</button>
+            <span id="notifyWwTestResult" style="font-size:12px;color:#666"></span>
+          </div>
+          <div class="form-hint">企业微信群 → 群设置 → 群机器人 → 添加 → 复制 Webhook URL</div>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="notifyScEnabled"> Server 酱（微信推送）</label>
+          <input id="notifyScKey" placeholder="SendKey (如 SCT...)" style="margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-outline btn-sm" onclick="testNotifyChannel('serverchan')">测试发送</button>
+            <span id="notifyScTestResult" style="font-size:12px;color:#666"></span>
+          </div>
+          <div class="form-hint">登录 https://sct.ftqq.com → 发送通道 → 复制 SendKey</div>
+        </div>
+        <div class="form-group" style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px">
+          <label>📋 通知规则（独立开关）</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:13px">
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleXrayCrashed"> xray 进程崩溃</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleRestartFailed"> 自动重启失败</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleNodeDisabled"> 节点自动禁用</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleNodeHealthLow"> 节点健康率 &lt; 20%</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleLoginLocked"> 登录失败锁定</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleTrafficWarn"> 流量达 80%</label>
+            <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="ruleTrafficExceeded"> 流量超 100%</label>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-primary" onclick="saveNotifyConfig()">💾 保存配置</button>
+          <button class="btn btn-outline" onclick="loadNotifyConfig()">↻ 重新加载</button>
+        </div>
+        <div id="notifyConfigStatus" style="font-size:12px;color:#666;margin-top:8px"></div>
+      </div>
+    </div>
+    <!-- TUN 模式配置 v1.17.0+ 透明代理 -->
+    <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
+      <label style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleTunConfig(this)">
+        <span>🌐 TUN 模式（透明代理）· 实验性</span>
+        <span class="collapse-icon" style="transition:transform .2s">▼</span>
+      </label>
+      <div id="tunConfigContent" style="display:none;margin-top:8px">
+        <!-- v1.17.0+ 安全警告（层级 5）-->
+        <div style="font-size:12px;line-height:1.7;color:#721c24;background:#f8d7da;border:2px solid #f5c6cb;border-radius:6px;padding:12px;margin-bottom:10px">
+          <b>⚠️ 高风险操作 · 动路由表的安全提示</b><br/>
+          TUN 模式会<strong>修改系统路由表 + iptables 规则</strong>，接管本机全部 TCP/UDP 流量。<br/>
+          <b>多重保护：</b><br/>
+          ① <b>卸载时自动清理</b>（<code>cmd/uninstall_callback</code> 删 tun 设备 + 清路由表 + 清 iptables）<br/>
+          ② <b>升级时自动清理</b>（<code>cmd/upgrade_callback</code> 先清旧残留再装）<br/>
+          ③ <b>xray 崩溃时自动清理</b>（守护进程检测到 + TUN 启用中 → 立即清理）<br/>
+          ④ <b>手动恢复脚本</b>：<code style="background:#000;color:#0f0;padding:2px 6px">sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh</code><br/>
+          <b>如不需要"全局代理"，强烈推荐用 Socks 模式</b>（不动路由表，更安全）。<br/>
+        </div>
+        <div style="font-size:12px;line-height:1.7;color:var(--text-primary);margin-bottom:10px;padding:10px;background:var(--tag-bg);border-radius:6px">
+          <strong>什么是 TUN 模式？</strong><br/>
+          默认代理（10808 SOCKS5 / 10809 HTTP）需要客户端主动配置代理；TUN 模式让<strong>本机所有进程</strong>的流量都自动走 xray —— <strong>透明代理</strong>，无需任何客户端配置。<br/>
+          <br/>
+          <strong>工作原理：</strong>xray-core 26.6.1 创建虚拟网卡 <code>tun0</code>，<code>autoSystemRoutingTable</code> 自动接管 default 路由，<code>autoOutboundsInterface</code> 指定出站网卡（留空自动检测）。<br/>
+          <strong>安全机制：</strong>二进制已 setcap 提权（cap_net_admin + cap_net_raw），<strong>daemon 跑 root</strong>（需 mihomo 同款 privilege 方案），<strong>安装时自动备份原始路由</strong>。<br/>
+          <strong>前置条件：</strong>fpk 内置 <code>config/privilege=root</code>（mihomo 同款通用方案），setcap 失败 TUN 不可用。升级会自动重跑 setcap。
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>TUN 设备名</label>
+          <input id="fTunName" placeholder="tun0" maxlength="16">
+          <div class="form-hint">默认 tun0，留空使用默认值</div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>MTU（1280-1500）</label>
+          <input id="fTunMtu" type="number" min="1280" max="1500" value="1500">
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>网关 IP（逗号分隔）</label>
+          <input id="fTunGateway" placeholder="172.19.0.1">
+          <div class="form-hint">TUN 设备网关（数组形式），避免与局域网冲突</div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>DNS（逗号分隔）</label>
+          <input id="fTunDns" placeholder="8.8.8.8,1.1.1.1">
+          <div class="form-hint">TUN 设备 DNS（数组形式）</div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>出站网卡（可选，留空自动检测）</label>
+          <input id="fTunOutIface" placeholder="enp3s0">
+          <div class="form-hint">如不知道网卡名，先 SSH 执行 <code>ip route | grep default</code> 查看</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="startTunMode()">▶️ 启用 TUN</button>
+          <button class="btn btn-danger" onclick="stopTunMode()">⏹ 停止 TUN</button>
+          <button class="btn btn-outline" onclick="loadTunConfig()">🔄 刷新状态</button>
+          <button class="btn btn-outline" onclick="cleanupTunNow()" style="border-color:#dc3545;color:#dc3545">🧹 强制清理残留</button>
+          <button class="btn btn-outline" onclick="showBackupGuide()">📖 恢复指南</button>
+        </div>
+        <div id="tunConfigStatus" style="font-size:12px;color:#666;margin-top:8px;line-height:1.6"></div>
+      </div>
+    </div>
     <!-- 更新日志（可折叠） -->
     <div class="form-group" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:8px">
       <label style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleChangelog(this)">
@@ -436,7 +579,82 @@ apt update</pre>
       </label>
       <div id="changelogContent" style="display:none;max-height:300px;overflow-y:auto;margin-top:8px;font-size:13px;line-height:1.7">
         <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
-          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.13.0 · 最新</div>
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.17.0 · 最新</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🌐 <strong>TUN 模式（透明代理）</strong>：让<strong>本机所有进程</strong>的流量自动走 xray，无需配置客户端（设置弹窗 → TUN 模式）。点启用 = 全局代理自动分流（国内直连 / 国外代理）</li>
+            <li>🔧 <strong>通用方案（mihomo 同款）</strong>：<code>config/privilege=run-as:root</code>，fnOS 复用已有 xray_proxy 用户，但 daemon 跑 root + xray 二进制 setcap cap_net_admin+cap_net_raw+ep（mihomo 的成熟方案，<b>通用</b>飞牛环境可用，不绑定特定用户）</li>
+            <li>📐 <strong>xray-core 26.6.1 字段 + 临时路由自动化</strong>：用 <code>{name, MTU, gateway[], DNS[], userLevel, autoSystemRoutingTable:['0.0.0.0/0'], autoOutboundsInterface}</code>。v1.17.0 v1→v9 共 9 个迭代修复 4 大坑：v3 字段错（v2ray-core 格式）→ v7 SIGUSR2 不创建 TUN（改 restartXray）→ v8 autoSystemRoutingTable=[] 不注入路由（改 ['0.0.0.0/0']）→ v9 gvisor 不注入临时路由（自动加 default+0.0.0.0/1+128.0.0.0/1 dev tun0 metric 50）</li>
+            <li>🛡️ <strong>6 重安全保护（动路由表的常提）</strong>：① 安装备份原始 default route + DNS ② <code>uninstall_callback</code> 自动清 tun 设备 + 临时路由 + 路由表 + iptables ③ <code>upgrade_callback</code> 升级前先清旧残留 ④ xray 崩溃守护自动清 TUN 残留 + 临时路由 ⑤ UI "🧹 强制清理残留"按钮 ⑥ <code>sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh</code> 手动恢复脚本（5 步 → 6 步，加临时路由清理）</li>
+            <li>📡 <strong>7 个新 API</strong>：<code>GET/POST /api/tun/config</code>、<code>POST /api/tun/start</code>（restartXray + 自动加 3 条临时路由）、<code>POST /api/tun/stop</code>（自动清 3 条临时路由）、<code>GET /api/tun/status</code>、<code>GET /api/tun/backup</code>、<code>POST /api/tun/cleanup</code> + 启动前自动调用 backupNetworkConfig</li>
+            <li>💾 <strong>tun.json 持久化</strong>：TUN 配置独立存储在 <code>${TRIM_PKGVAR}/tun.json</code>，不污染主 config.json</li>
+            <li>🔄 <strong>restartXray 完全重启</strong>：v1.17.0-v7 前用 SIGUSR2 热加载（v1.17.0-v6 装上发现 xray 26.6.1 TUN inbound 不支持热加载），v1.17.0-v7+ 改用 <code>stopXray() + startXray()</code> 完全重启 xray（确保 TUN 设备正确创建/销毁）</li>
+            <li>🛠 <strong>v1.17.0 v9 临时路由自动化（M50 关键修复）</strong>：xray 26.6.1 用 gvisor 用户态网络栈（autoSystemRoutingTable 是 placeholder，不实现 OS 路由注入），需手动加 <code>default + 0.0.0.0/1 + 128.0.0.0/1</code> dev tun0 metric 50 才能让所有应用自动走 TUN。v9 在 5 处加 addTunRoutes/delTunRoutes：① tun.js start 端点（启用时自动加） ② tun.js stop 端点（停用时自动清） ③ install_callback 修 backup_network.sh 模板（5 步 → 6 步） ④ uninstall_callback + upgrade_callback（卸载/升级时清） ⑤ process.js 崩溃处理（xray 崩溃时清，避免断网）</li>
+            <li>⚠️ <strong>实验性 + 动路由表的安全提示</strong>：TUN 会改路由表 + iptables，6 重保护已就位。路由器/网桥/容器宿主机等场景<strong>慎用</strong>。如不需要"全局代理"，推荐用 Socks 模式（不动路由表）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.16.0</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>登录失败自动锁定</strong>：5 次错误 → 锁定 5 分钟（可配置），429 错误 + Retry-After 头。防暴力破解。</li>
+            <li>🔔 <strong>3 渠道通知</strong>：Telegram Bot + 企业微信 Webhook + Server 酱（微信推送），独立开关，独立测试按钮（设置弹窗 → 通知配置）</li>
+            <li>📋 <strong>7 条通知规则</strong>：xray 进程崩溃 / 自动重启失败 / 节点自动禁用（合并通知）/ 节点健康率 &lt; 20% / 登录失败锁定 / 流量达 80% / 流量超 100%——逐条独立开关</li>
+            <li>🔒 <strong>P1 安全加固</strong>：备份 KDF 迭代 10万 → 60万（OWASP 2023+ 标准）+ 密码 scrypt N=16384 → 131072（2024+ 推荐），现有用户自动平滑升级无需重置</li>
+            <li>🛠 <strong>同步修 v1.15.1 漏改 bug</strong>：<code>package.json</code> version 一直是 "1.15.1"，本次统一改为 "1.16.0"</li>
+            <li>📜 <strong>6 个新 API</strong>：<code>GET/POST /api/notify/config</code>（读写通知配置，自动脱敏密钥回显）、<code>POST /api/notify/test/:channel</code>（3 渠道独立测试）、<code>GET /api/notify/log</code>（最近 50 条发送历史）、<code>GET /api/auth/lockout-config</code>（查看锁定阈值，admin 可调）</li>
+            <li>🎯 <strong>防刷屏设计</strong>：30s 内同事件不重复通知（避免重启风暴时手机被轰炸）；多条节点同时禁用 → 合并为 1 次通知；锁定通知仅"刚触发"时发（不在 5 分钟内反复发）</li>
+            <li>🔄 <strong>100% 向后兼容</strong>：未配置任何通知渠道 → 应用行为与 v1.15.5 完全一致；密码升级透明（verifyPassword 成功后自动用新 N 重 hash）</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.15.3</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🎯 <strong>核心：with-proxy 文档详细化</strong>：本应用<strong>杀手锏</strong>是 <code>with-proxy</code> 命令行代理包裹器——Web UI 跑通 ≠ 命令行能上网，with-proxy 让所有 CLI 工具（apt/git/curl/npm/pip/ssh/scp 等）走面板代理。GitHub README 新增 100+ 行专章，应用中心 desc 重写为详细版（含支持/不支持命令列表、网络要求、安全承诺、使用示例）</li>
+            <li>📖 <strong>README 新增 6 个表格</strong>：支持的命令（按类别）/ 不支持的场景（7 种 + 原因）/ 网络与权限要求 / 安全机制（5 条核心承诺）/ 常见问题 5 条 / 高级 enable-proxy.sh 用法</li>
+            <li>🆘 <strong>同步补 v1.15.2 changelog</strong>：之前 v1.15.2 UI changelogContent 漏写，本次补上"修复 vless xhttp+reality 链接导入失败"两条 bug</li>
+            <li>🔒 <strong>无代码改动</strong>：本次纯文档改进，<strong>100% 向后兼容</strong>，直接覆盖升级即可</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.15.2</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>修复 vless xhttp+reality 链接导入失败</strong>（两个 bug 共同导致）：①前端 URL 错误，POST <code>/api/parse-link</code> 应为 <code>/api/nodes/parse-link</code>（routers/nodes.js 挂在 <code>/api/nodes</code>）→ 永 404 → "导入失败" ②<code>parseVless</code> 不支持 <code>type=xhttp & security=reality</code>，pbk/fp/sid/path 全丢失 → 即使 URL 修好，xray 启动报 <code>xhttpSettings/realitySettings is required</code></li>
+            <li>🔧 <strong>parseVless 扩展</strong>：加 <code>else if (net === 'xhttp')</code> 分支生成 <code>xhttpSettings</code>（path/host），加 <code>else if (sec === 'reality')</code> 分支生成 <code>realitySettings</code>（serverName/fingerprint/publicKey/shortId）；保留所有原有 ws/grpc/tls 处理逻辑</li>
+            <li>✅ <strong>3 重验证</strong>：Node.js 解析测试 pbk/fp/sid/path 全捕获 + xray 26.6.1 run -c test.json 报 <code>Xray 26.6.1 started</code> 0 报错 + 完整 fpk 校验 checksum 自动对齐</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.15.1</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🚀 <strong>集成 xray 二进制到 fpk</strong>：fpk 内置 xray 26.6.1（37MB）+ geoip.dat（19MB）+ geosite.dat（10MB）= 66MB 资源，<strong>无需外网下载</strong>，开箱即用</li>
+            <li>🆘 <strong>修复"首次启动死锁"</strong>：之前 xray 二进制需要从 GitHub 下载（约 60MB），但应用本身是代理工具，没 xray 就没法走代理下载 → 网络不通时整个应用坏掉。v1.15.1 改为 fpk 内置，<strong>安装即用</strong></li>
+            <li>📦 <strong>fpk 体积变化</strong>：22MB → ~80MB（gzip 压缩后），首装大但<strong>无网络依赖</strong>，内网/隔离环境也能正常用</li>
+            <li>🔄 <strong>智能复用 PKGVAR</strong>：cmd/main 启动时检测 <code>${PKGVAR}/xray-bin/xray</code> 是否已存在（v1.15.0 之前的版本从外网下载后落盘），<strong>存在则不覆盖</strong>（保留用户可能自定义的版本）；缺失才从 fpk 拷贝</li>
+            <li>📜 <strong>README 修正"内置 xray"措辞</strong>：之前说"内置 xray 26.6.1"但实际是首启下载——v1.15.1 起真"内置"了（fpk 里）</li>
+            <li>🔒 <strong>v1.15.0 鉴权机制保留</strong>：账号密码登录 + access/refresh token 双层鉴权 + Token 备选登录 完全兼容</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.15.0</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>账号密码登录</strong>（替代纯 Token 登录）：首次访问强制设置密码（≥ 6 字符），老用户升级 v1.15.0 也需在首次登录页设置密码后才能用主界面</li>
+            <li>🔒 <strong>Access Token + Refresh Token 双层鉴权</strong>：access token 短期 1h 有效，refresh token 长期 30d；前端每 50min 自动调 <code>/api/auth/refresh</code> 续期（无需手动重登）</li>
+            <li>🔄 <strong>登录态三态切换</strong>：<code>setup</code>（首次设密）/ <code>password</code>（账号密码登录，主流程）/ <code>token</code>（备选，老 Token 直接登录）</li>
+            <li>📜 <strong>3 个新 API</strong>：<code>POST /api/auth/setup</code>（首次设密，返 access + refresh token）、<code>POST /api/auth/refresh</code>（用 refresh token 换新 access token）、<code>GET /api/auth/status</code>（返 <code>status: 'setup_needed' | 'password_set'</code>，前端用此决定显示哪个登录区）</li>
+            <li>💾 <strong>密码加密存储</strong>：<code>crypto.scryptSync</code> 加盐（16 字节 salt + 64 字节 hash），<code>timingSafeEqual</code> 防时序攻击；密码仅 hash 存盘，原文不落盘</li>
+            <li>🔑 <strong>不做密码 reset</strong>：忘密码走 SSH + sudo 删 <code>auth.json</code>（v1.15.0+ 4 个 callback 已支持），下次启动重新走首次设密流程</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.14.0</div>
+          <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
+            <li>🆘 <strong>6 项 P0 严重修复</strong>：①杀 xray 残留改 <code>pkill -x xray</code> 精确匹配（避免误伤 SSH 手动跑的 xray）②杀进程同步等退出（pidof 轮询 + SIGKILL 兜底，端口不冲突）③backup import 加配置校验（坏配置无法污染）④Node 进程崩溃自动退出（uncaughtException exit(1) + logToInfo [FATAL]，避免内存腐蚀继续服务）⑤getConfig 去写盘副作用（防止并发竞争）⑥Chart.js 本地化（v1.13.0 7d 延迟历史图表离线部署可用）</li>
+            <li>📈 <strong>4 块性能优化</strong>：①测速并发限流（p-limit 10，<code>/api/nodes/test-all</code> + health checkAll）②历史数据改 NDJSON 增量写（每节点独立，< 5ms 写盘，append-only 崩溃安全）③节点表事件委托（<code>#nodeList</code> 一次绑 8 事件，100 节点零卡顿）</li>
+            <li>🆕 <strong>移动端触摸拖拽支持</strong>：节点表长按 200ms 触发拖拽（HTML5 drag/drop 在手机 WebView 不工作），支持滑动取消 + 触觉反馈，手机可直接拖拽节点排序</li>
+            <li>🔒 <strong>auto_select 状态分离</strong>：v1.13.0 与 history 共用 <code>node_history.json</code> 改为独立 <code>auto_select.json</code>，迁移时兜底兼容老文件</li>
+          </ul>
+        </div>
+        <div style="padding:8px 12px;background:var(--tag-bg);border-radius:6px;margin-bottom:8px">
+          <div style="font-weight:600;color:var(--primary);margin-bottom:4px">v1.13.0</div>
           <ul style="margin:0;padding-left:20px;color:var(--text-primary)">
             <li>🆘 <strong>A. 批量测速 + 自动切换最优节点</strong>：节点表头加"⚡ 全部测速"按钮，并发测试所有节点；开关"🤖 自动切换最优"后，系统会按最近 5 次平均延迟自动选最优节点（连续 3 次稳定 + 30s 最小间隔抖动保护），也可一键"🎯 立即切最优"</li>
             <li>🆘 <strong>B. 节点延迟历史 7 天</strong>：每个节点自动记录历史延迟，环形 buffer 2000 条≈7d；节点操作列加"📊 历史"按钮，弹窗含 24h/7d 切换 + Chart.js 折线图，绿色健康/黄色一般/红色差延迟一目了然</li>
@@ -655,7 +873,7 @@ apt update</pre>
 
 <div class="toast" id="toast"></div>
 <!-- v1.10.0+ Chart.js 流量图表 -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="lib/chart.umd.min.js"></script>
 <script>
 // v1.7.4+ 系统节点白名单（前后端保持一致，UI 显示 🔒 + 禁用删除按钮）
 const SYSTEM_NODE_TAGS = ['proxy', 'direct', 'block', 'api'];
@@ -1331,31 +1549,125 @@ function renderNodes(outbounds) {
   bindDragEvents();
 }
 
+// v1.14.0+ 事件委托到 #nodeList（替代 v1.13.0 每行 addEventListener）
+// 修 v1.13.0 风险：N 行 × 5 事件 = 5N 事件绑定；100 节点 = 500 事件；renderNodes 重渲染全部重新绑定
+// 设计：nodeList 一次绑定 5 事件，row 用 e.target.closest('tr[draggable]') 找到
+// 避免重复绑定：list._dragBound 标记
 function bindDragEvents() {
-  const rows = document.querySelectorAll('#nodeList tr[draggable]');
-  rows.forEach(function(row){
-    row.addEventListener('dragstart', function(e){
-      dragSrc = row.dataset.tag;
+  const list = document.getElementById('nodeList');
+  if (!list) return;
+  if (list._dragBound) return;  // 已绑定则跳过
+  list._dragBound = true;
+
+  list.addEventListener('dragstart', function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (!row) return;
+    dragSrc = row.dataset.tag;
+    row.classList.add('dragging');
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  });
+
+  list.addEventListener('dragend', function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (row) row.classList.remove('dragging');
+    document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
+  });
+
+  list.addEventListener('dragover', function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (!row) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
+    row.classList.add('drop-target');
+  });
+
+  list.addEventListener('dragleave', function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (row) row.classList.remove('drop-target');
+  });
+
+  list.addEventListener('drop', async function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (!row) return;
+    e.preventDefault();
+    row.classList.remove('drop-target');
+    const dst = row.dataset.tag;
+    if (dragSrc && dst && dragSrc !== dst) await reorderNodes(dragSrc, dst);
+  });
+
+  // v1.14.0+ 触摸拖拽支持（HTML5 drag/drop 在手机 WebView 不工作）
+  // 修 v1.13.0 风险：手机 WebView 无法拖拽节点排序
+  // 设计：长按 200ms 触发 + touchmove 移动 + touchend 放下（复用 dragSrc / drop-target class / reorderNodes）
+  // 避免重复绑定：list._touchBound 标记
+  if (list._touchBound) return;
+  list._touchBound = true;
+  const touchState = { active: false, srcTag: null, srcRow: null, currentRow: null, longPressTimer: null, startX: 0, startY: 0 };
+  const TOUCH_LONG_PRESS_MS = 200;
+  const TOUCH_MOVE_THRESHOLD = 10;  // 移动超过 10px 算滑动（取消长按）
+
+  list.addEventListener('touchstart', function(e) {
+    const row = e.target.closest && e.target.closest('tr[draggable]');
+    if (!row) return;
+    const t = e.touches[0];
+    touchState.startX = t.clientX;
+    touchState.startY = t.clientY;
+    touchState.srcRow = row;
+    touchState.srcTag = row.dataset.tag;
+    touchState.active = false;
+    touchState.longPressTimer = setTimeout(function() {
+      touchState.active = true;
       row.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    row.addEventListener('dragend', function(){
-      row.classList.remove('dragging');
+      // 触觉反馈（部分手机 WebView 支持）
+      if (navigator.vibrate) try { navigator.vibrate(50); } catch (_) {}
+    }, TOUCH_LONG_PRESS_MS);
+  }, { passive: true });
+
+  list.addEventListener('touchmove', function(e) {
+    if (!touchState.srcRow) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchState.startX;
+    const dy = t.clientY - touchState.startY;
+    if (!touchState.active) {
+      // 未激活（长按未触发）：检查是否移动过阈值
+      if (Math.abs(dx) > TOUCH_MOVE_THRESHOLD || Math.abs(dy) > TOUCH_MOVE_THRESHOLD) {
+        clearTimeout(touchState.longPressTimer);
+        touchState.srcRow = null;
+      }
+      return;
+    }
+    // 已激活（拖拽中）：找 touchover 元素
+    const elemBelow = document.elementFromPoint(t.clientX, t.clientY);
+    const targetRow = elemBelow && elemBelow.closest && elemBelow.closest('tr[draggable]');
+    if (targetRow && targetRow !== touchState.currentRow) {
       document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
-    });
-    row.addEventListener('dragover', function(e){
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
-      row.classList.add('drop-target');
-    });
-    row.addEventListener('dragleave', function(){ row.classList.remove('drop-target'); });
-    row.addEventListener('drop', async function(e){
-      e.preventDefault();
-      row.classList.remove('drop-target');
-      const dst = row.dataset.tag;
-      if (dragSrc && dst && dragSrc !== dst) await reorderNodes(dragSrc, dst);
-    });
+      if (targetRow !== touchState.srcRow) {
+        targetRow.classList.add('drop-target');
+        touchState.currentRow = targetRow;
+      } else {
+        touchState.currentRow = null;
+      }
+    }
+  }, { passive: true });
+
+  list.addEventListener('touchend', async function(e) {
+    if (touchState.longPressTimer) clearTimeout(touchState.longPressTimer);
+    if (touchState.active && touchState.currentRow) {
+      const dstTag = touchState.currentRow.dataset.tag;
+      const srcTag = touchState.srcTag;
+      if (srcTag && dstTag && srcTag !== dstTag) {
+        try { await reorderNodes(srcTag, dstTag); } catch (_) {}
+      }
+    }
+    // 清理状态
+    if (touchState.srcRow) touchState.srcRow.classList.remove('dragging');
+    if (touchState.currentRow) touchState.currentRow.classList.remove('drop-target');
+    document.querySelectorAll('tr.drop-target').forEach(function(r){ r.classList.remove('drop-target'); });
+    touchState.active = false;
+    touchState.srcTag = null;
+    touchState.srcRow = null;
+    touchState.currentRow = null;
+    touchState.longPressTimer = null;
   });
 }
 
@@ -1883,7 +2195,7 @@ async function importLink() {
   let success = 0, failed = 0;
   for (const link of links) {
     try {
-      const r = await fetch('/api/parse-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link: link }) });
+      const r = await fetch('/api/nodes/parse-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link: link }) });
       const d = await r.json();
       if (d.ok && d.node) {
         const r2 = await fetch('/api/nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d.node) });
@@ -2049,6 +2361,254 @@ async function deleteNode(tag) {
   } catch(e) { showToast('删除失败', 'error'); }
 }
 
+// v1.17.0+ TUN 模式（折叠 + 加载 + 启停 + 安全网）
+function toggleTunConfig(label) {
+  const c = document.getElementById('tunConfigContent');
+  const icon = label.querySelector('.collapse-icon');
+  if (c.style.display === 'none') {
+    c.style.display = 'block';
+    if (icon) icon.style.transform = 'rotate(180deg)';
+    loadTunConfig();
+  } else {
+    c.style.display = 'none';
+    if (icon) icon.style.transform = '';
+  }
+}
+
+async function loadTunConfig() {
+  const status = document.getElementById('tunConfigStatus');
+  if (!status) return;
+  status.textContent = '加载中...';
+  try {
+    const r = await fetch('/api/tun/config');
+    const d = await r.json();
+    if (d.ok) {
+      // 填表（新字段集：name/MTU/gateway/DNS/autoOutboundsInterface）
+      document.getElementById('fTunName').value = d.config.name || 'tun0';
+      document.getElementById('fTunMtu').value = d.config.MTU || 1500;
+      document.getElementById('fTunGateway').value = (d.config.gateway || ['172.19.0.1']).join(',');
+      document.getElementById('fTunDns').value = (d.config.DNS || ['8.8.8.8', '1.1.1.1']).join(',');
+      document.getElementById('fTunOutIface').value = d.config.autoOutboundsInterface || '';
+      // 状态展示
+      const enabledTxt = d.config.enabled ? '✅ 已启用' : '⚪ 未启用';
+      const xrayTxt = d.xray.running ? `运行中 (pid=${d.xray.pid})` : '❌ 未运行';
+      const deviceTxt = d.device.exists ? '✅ 设备已创建' : '⚪ 设备未创建';
+      status.innerHTML = `${enabledTxt} | xray: ${xrayTxt} | TUN 设备: ${deviceTxt}<br/>当前配置: name=${d.config.name}, MTU=${d.config.MTU}, gateway=${(d.config.gateway||[]).join(',')}, DNS=${(d.config.DNS||[]).join(',')}, 出站网卡=${d.config.autoOutboundsInterface||'自动检测'}`;
+      status.style.color = d.config.enabled && d.xray.running && d.device.exists ? 'var(--primary)' : '#666';
+    } else {
+      status.textContent = '加载失败: ' + (d.error || '未知错误');
+      status.style.color = 'red';
+    }
+  } catch (e) {
+    status.textContent = '加载失败: ' + e.message;
+    status.style.color = 'red';
+  }
+}
+
+async function startTunMode() {
+  if (!confirm('⚠️ 启用 TUN 模式将接管本机全部 TCP/UDP 流量。\n\n安全保护：\n① 卸载/升级/xray 崩溃时都会自动清理 TUN 残留\n② 万一断网可用：sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh\n\n确定启用？')) return;
+  const status = document.getElementById('tunConfigStatus');
+  // 先保存配置（新字段集）
+  const name = document.getElementById('fTunName').value.trim() || 'tun0';
+  const mtu = parseInt(document.getElementById('fTunMtu').value, 10) || 1500;
+  const gateway = document.getElementById('fTunGateway').value.split(',').map(s => s.trim()).filter(s => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(s));
+  const dns = document.getElementById('fTunDns').value.split(',').map(s => s.trim()).filter(s => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(s));
+  const outIface = document.getElementById('fTunOutIface').value.trim();
+  try {
+    await fetch('/api/tun/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, MTU: mtu, gateway, DNS: dns, autoOutboundsInterface: outIface })
+    });
+  } catch (e) { /* 保存失败不阻止启停 */ }
+  status.textContent = '启用中...';
+  status.style.color = '#666';
+  try {
+    const r = await fetch('/api/tun/start', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('TUN 模式已启用', 'success');
+      await loadTunConfig();
+    } else {
+      status.textContent = '启用失败: ' + (d.error || '未知错误');
+      status.style.color = 'red';
+      showToast(d.error || '启用失败', 'error');
+    }
+  } catch (e) {
+    status.textContent = '启用失败: ' + e.message;
+    status.style.color = 'red';
+    showToast('启用失败: ' + e.message, 'error');
+  }
+}
+
+async function stopTunMode() {
+  if (!confirm('确认停止 TUN 模式？\n\n将关闭虚拟网卡 + 清理路由表 + 清理 iptables 规则。')) return;
+  const status = document.getElementById('tunConfigStatus');
+  status.textContent = '停止中...';
+  status.style.color = '#666';
+  try {
+    const r = await fetch('/api/tun/stop', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('TUN 模式已停止', 'success');
+      await loadTunConfig();
+    } else {
+      status.textContent = '停止失败: ' + (d.error || '未知错误');
+      status.style.color = 'red';
+      showToast(d.error || '停止失败', 'error');
+    }
+  } catch (e) {
+    status.textContent = '停止失败: ' + e.message;
+    status.style.color = 'red';
+    showToast('停止失败: ' + e.message, 'error');
+  }
+}
+
+// v1.17.0+ 强制清理 TUN 残留（不依赖 xray 状态）
+async function cleanupTunNow() {
+  if (!confirm('🧹 强制清理 TUN 残留？\n\n将删除 tun 设备 + 清理路由表 + 清理 iptables 规则。\n\n用于：xray 崩溃后 UI 卡住、TUN 残留导致网络异常。')) return;
+  const status = document.getElementById('tunConfigStatus');
+  status.textContent = '清理中...';
+  status.style.color = '#666';
+  try {
+    const r = await fetch('/api/tun/cleanup', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('TUN 残留已清理', 'success');
+      status.textContent = '✅ 清理完成';
+      status.style.color = 'var(--primary)';
+      await loadTunConfig();
+    } else {
+      status.textContent = '清理失败: ' + (d.error || '未知错误');
+      status.style.color = 'red';
+    }
+  } catch (e) {
+    status.textContent = '清理失败: ' + e.message;
+    status.style.color = 'red';
+  }
+}
+
+// v1.17.0+ 显示恢复指南
+async function showBackupGuide() {
+  try {
+    const r = await fetch('/api/tun/backup');
+    const d = await r.json();
+    if (d.ok) {
+      const lines = (d.instructions || []).join('\n');
+      alert('📖 TUN 模式手动恢复指南\n\n' + lines + '\n\n备份文件：\n' + d.backup.conf + '\n' + d.backup.sh);
+    } else {
+      alert('获取恢复指南失败: ' + (d.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('获取恢复指南失败: ' + e.message);
+  }
+}
+
+// v1.16.0+ 通知配置（折叠 + 加载 + 保存 + 测试）
+function toggleNotifyConfig(label) {
+  const c = document.getElementById('notifyConfigContent');
+  const icon = label.querySelector('.collapse-icon');
+  if (c.style.display === 'none') {
+    c.style.display = 'block';
+    if (icon) icon.style.transform = 'rotate(180deg)';
+    loadNotifyConfig();
+  } else {
+    c.style.display = 'none';
+    if (icon) icon.style.transform = '';
+  }
+}
+
+async function loadNotifyConfig() {
+  try {
+    const r = await fetch('/api/notify/config', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.ok) return;
+    const c = j.config;
+    document.getElementById('notifyTgEnabled').checked = !!(c.channels.telegram && c.channels.telegram.enabled);
+    document.getElementById('notifyTgToken').value = (c.channels.telegram && c.channels.telegram.botToken) || '';
+    document.getElementById('notifyTgChatId').value = (c.channels.telegram && c.channels.telegram.chatId) || '';
+    document.getElementById('notifyWwEnabled').checked = !!(c.channels.wechatWork && c.channels.wechatWork.enabled);
+    document.getElementById('notifyWwUrl').value = (c.channels.wechatWork && c.channels.wechatWork.webhookUrl) || '';
+    document.getElementById('notifyScEnabled').checked = !!(c.channels.serverchan && c.channels.serverchan.enabled);
+    document.getElementById('notifyScKey').value = (c.channels.serverchan && c.channels.serverchan.sendKey) || '';
+    document.getElementById('ruleXrayCrashed').checked = !!(c.rules && c.rules.xray_crashed);
+    document.getElementById('ruleRestartFailed').checked = !!(c.rules && c.rules.xray_restart_failed);
+    document.getElementById('ruleNodeDisabled').checked = !!(c.rules && c.rules.node_disabled);
+    document.getElementById('ruleNodeHealthLow').checked = !!(c.rules && c.rules.node_health_low);
+    document.getElementById('ruleLoginLocked').checked = !!(c.rules && c.rules.login_locked);
+    document.getElementById('ruleTrafficWarn').checked = !!(c.rules && c.rules.traffic_warning);
+    document.getElementById('ruleTrafficExceeded').checked = !!(c.rules && c.rules.traffic_exceeded);
+  } catch (e) {
+    document.getElementById('notifyConfigStatus').textContent = '加载失败: ' + e.message;
+  }
+}
+
+async function saveNotifyConfig() {
+  const cfg = {
+    channels: {
+      telegram:    { enabled: document.getElementById('notifyTgEnabled').checked, botToken: document.getElementById('notifyTgToken').value, chatId: document.getElementById('notifyTgChatId').value },
+      wechatWork:  { enabled: document.getElementById('notifyWwEnabled').checked, webhookUrl: document.getElementById('notifyWwUrl').value },
+      serverchan:  { enabled: document.getElementById('notifyScEnabled').checked, sendKey: document.getElementById('notifyScKey').value }
+    },
+    rules: {
+      xray_crashed:        document.getElementById('ruleXrayCrashed').checked,
+      xray_restart_failed: document.getElementById('ruleRestartFailed').checked,
+      node_disabled:       document.getElementById('ruleNodeDisabled').checked,
+      node_health_low:     document.getElementById('ruleNodeHealthLow').checked,
+      login_locked:        document.getElementById('ruleLoginLocked').checked,
+      traffic_warning:     document.getElementById('ruleTrafficWarn').checked,
+      traffic_exceeded:    document.getElementById('ruleTrafficExceeded').checked
+    }
+  };
+  const status = document.getElementById('notifyConfigStatus');
+  status.textContent = '保存中...';
+  try {
+    const r = await fetch('/api/notify/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify(cfg)
+    });
+    const j = await r.json();
+    if (j.ok) {
+      status.textContent = '✓ 已保存';
+      status.style.color = '#34a853';
+      loadNotifyConfig();
+    } else {
+      status.textContent = '✗ ' + (j.error || '保存失败');
+      status.style.color = '#ea4335';
+    }
+  } catch (e) {
+    status.textContent = '✗ ' + e.message;
+    status.style.color = '#ea4335';
+  }
+}
+
+async function testNotifyChannel(channel) {
+  const resultId = { telegram: 'notifyTgTestResult', wechatWork: 'notifyWwTestResult', serverchan: 'notifyScTestResult' }[channel];
+  const labels = { telegram: 'Telegram', wechatWork: '企业微信', serverchan: 'Server 酱' };
+  const span = document.getElementById(resultId);
+  span.textContent = '发送中...';
+  span.style.color = '#666';
+  try {
+    const r = await fetch('/api/notify/test/' + channel, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + getToken() }
+    });
+    const j = await r.json();
+    if (j.ok) {
+      span.textContent = '✓ 已发送，请检查 ' + labels[channel];
+      span.style.color = '#34a853';
+    } else {
+      span.textContent = '✗ ' + (j.error || '失败');
+      span.style.color = '#ea4335';
+    }
+  } catch (e) {
+    span.textContent = '✗ ' + e.message;
+    span.style.color = '#ea4335';
+  }
+}
+
 // v1.10.0+ SSE 实时日志（替代 5s 轮询）
 let _logSSE = null;
 function startLogSSE() {
@@ -2122,27 +2682,49 @@ document.getElementById('settingsModal').addEventListener('click', function(e){ 
 </div><!-- /main-page -->
 
 <script>
-// ====== v1.3.0+ 鉴权：fetch 拦截 + 登录管理 ======
+// ====== v1.15.0+ 鉴权：fetch 拦截 + 三态登录（setup / password / token）======
+// v1.3.0+ 兼容：token 登录 + localStorage 存储
+// v1.15.0+ 新增：账号密码登录（设置密码 + 密码登录）+ refresh token 自动续期
 const TOKEN_KEY = 'xpn_token_v1';
+const REFRESH_TOKEN_KEY = 'xpn_refresh_v1';
 const origFetch = window.fetch.bind(window);
 
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+function getRefreshToken() { return localStorage.getItem(REFRESH_TOKEN_KEY) || ''; }
+function setRefreshToken(t) { if (t) localStorage.setItem(REFRESH_TOKEN_KEY, t); else localStorage.removeItem(REFRESH_TOKEN_KEY); }
 
-function showLogin(msg) {
+// v1.15.0+ 三态登录：mode = 'setup' | 'password' | 'token'
+function showLogin(msg, mode) {
+  mode = mode || 'password';
   setToken(null);
+  setRefreshToken(null);
+  stopRefreshTimer();
   document.getElementById('login-page').style.display = 'flex';
   document.getElementById('main-page').style.display = 'none';
-  if (msg) document.getElementById('login-error').textContent = msg;
-  updateLoginBtnState();
+  document.getElementById('login-setup').style.display = (mode === 'setup') ? 'block' : 'none';
+  document.getElementById('login-password').style.display = (mode === 'password') ? 'block' : 'none';
+  document.getElementById('login-token-area').style.display = (mode === 'token') ? 'block' : 'none';
+  if (msg) {
+    if (mode === 'setup') document.getElementById('setup-error').textContent = msg;
+    else if (mode === 'password') document.getElementById('login-pwd-error').textContent = msg;
+    else document.getElementById('login-error').textContent = msg;
+  } else {
+    document.getElementById('setup-error').textContent = '';
+    document.getElementById('login-pwd-error').textContent = '';
+    document.getElementById('login-error').textContent = '';
+  }
+  if (mode === 'setup') updateSetupBtnState();
+  else if (mode === 'password') updatePasswordLoginBtnState();
+  else updateLoginBtnState();
 }
 function showMain() {
   document.getElementById('login-page').style.display = 'none';
   document.getElementById('main-page').style.display = 'block';
+  startRefreshTimer();
 }
 
-// v1.3.1+ 实时更新登录按钮状态（input 字符数 / 32 时启用，<32 禁用）
-// 防止手机 WebView 粘贴截断 / 输入不完整时无感知地点登录
+// v1.3.1+ 实时更新 Token 登录按钮状态（input 字符数 = 32 时启用，<32 禁用）
 function updateLoginBtnState() {
   const input = document.getElementById('login-token');
   const counter = document.getElementById('login-counter');
@@ -2169,6 +2751,72 @@ function updateLoginBtnState() {
   }
 }
 
+// v1.15.0+ 设置密码按钮状态：两个 input 都 ≥ 6 字符 + 两次输入一致 → 启用
+function updateSetupBtnState() {
+  const p1 = document.getElementById('setup-pwd1');
+  const p2 = document.getElementById('setup-pwd2');
+  const btn = document.getElementById('setup-btn');
+  const errEl = document.getElementById('setup-error');
+  if (!p1 || !p2 || !btn) return;
+  const v1 = p1.value || '';
+  const v2 = p2.value || '';
+  const ok = v1.length >= 6 && v2.length >= 6 && v1 === v2;
+  btn.disabled = !ok;
+  btn.style.background = btn.disabled ? '#9e9e9e' : '#1a73e8';
+  btn.style.cursor = btn.disabled ? 'not-allowed' : 'pointer';
+  if (v2.length > 0 && v1 !== v2) errEl.textContent = '两次输入不一致';
+  else if (v1.length > 0 && v1.length < 6) errEl.textContent = '密码至少 6 字符';
+  else errEl.textContent = '';
+}
+
+// v1.15.0+ 账号密码登录按钮状态：非空就启用
+function updatePasswordLoginBtnState() {
+  const input = document.getElementById('login-pwd-input');
+  const btn = document.getElementById('login-pwd-btn');
+  if (!input || !btn) return;
+  const v = (input.value || '').trim();
+  btn.disabled = (v.length === 0);
+  btn.style.background = btn.disabled ? '#9e9e9e' : '#1a73e8';
+  btn.style.cursor = btn.disabled ? 'not-allowed' : 'pointer';
+}
+
+// v1.15.0+ 把登录响应里的 token + refresh_token 存到 localStorage
+function storeAuth(data) {
+  if (data.token) setToken(data.token);
+  if (data.refresh_token) setRefreshToken(data.refresh_token);
+}
+
+// v1.15.0+ Refresh Token 自动续期定时器（每 50 分钟调 /api/auth/refresh）
+let refreshTimer = null;
+function startRefreshTimer() {
+  stopRefreshTimer();
+  // access token TTL 1h，提前 50min 续期
+  refreshTimer = setInterval(refreshAuthToken, 50 * 60 * 1000);
+}
+function stopRefreshTimer() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+async function refreshAuthToken() {
+  const refresh = getRefreshToken();
+  if (!refresh) return;
+  try {
+    const r = await origFetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refresh })
+    });
+    if (r.ok) {
+      const d = await r.json();
+      storeAuth(d);
+    } else {
+      const body = await r.json().catch(() => ({}));
+      if (body && body.need_login) {
+        showLogin('会话已过期（refresh token 失效），请重新登录', 'password');
+      }
+    }
+  } catch (_) { /* 静默失败，下次重试 */ }
+}
+
 window.fetch = function(input, init) {
   init = init || {};
   const url = typeof input === 'string' ? input : (input && input.url) || '';
@@ -2180,37 +2828,122 @@ window.fetch = function(input, init) {
     }
   }
   return origFetch(input, init).then(r => {
-    // 401 → 跳登录页（[v1.4.0+ 调试增强] showLogin 传入详细 URL + status）
+    // 401 → 跳密码登录页（[v1.15.0+ 改造] 原 showLogin(msg) 改为 showLogin(msg, 'password')）
     if (r.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
-      showLogin(`Token 错误或已变更（HTTP 401 @ ${url}），请重新登录`);
+      showLogin(`登录已失效（HTTP 401 @ ${url}），请重新登录`, 'password');
     }
     // 503 + need_wait → 还在初始化（[v1.4.0+] 调 showLogin 让用户看到明确的等待提示）
     if (r.status === 503 && url.startsWith('/api/')) {
       r.clone().json().then(d => {
         if (d && d.need_wait) {
-          showLogin('应用启动中，Token 还没生成，请等待 5 秒后重试');
+          showLogin('应用启动中，Token 还没生成，请等待 5 秒后重试', 'password');
         }
       }).catch(()=>{});
     }
     return r;
   }).catch(e => {
-    // [v1.4.0+ 调试增强] 网络错误也显示到 #login-error
+    // [v1.15.0+ 调试增强] 网络错误显示到当前可见的登录区错误区
     if (url.startsWith('/api/')) {
-      const errEl = document.getElementById('login-error');
-      if (errEl) errEl.textContent = `❌ 网络错误: ${e.message}（${url}）`;
+      const pwdErrEl = document.getElementById('login-pwd-error');
+      const setupErrEl = document.getElementById('setup-error');
+      const tokenErrEl = document.getElementById('login-error');
+      const msg = `❌ 网络错误: ${e.message}（${url}）`;
+      if (pwdErrEl && pwdErrEl.offsetParent !== null) pwdErrEl.textContent = msg;
+      else if (setupErrEl && setupErrEl.offsetParent !== null) setupErrEl.textContent = msg;
+      else if (tokenErrEl) tokenErrEl.textContent = msg;
     }
     throw e;
   });
 };
 
-async function doLogin() {
+// v1.15.0+ 首次设置密码
+async function doSetup() {
+  const p1 = (document.getElementById('setup-pwd1').value || '');
+  const p2 = (document.getElementById('setup-pwd2').value || '');
+  const errEl = document.getElementById('setup-error');
+  const btn = document.getElementById('setup-btn');
+  if (p1.length < 6) { errEl.textContent = '密码至少 6 字符'; return; }
+  if (p1 !== p2) { errEl.textContent = '两次输入不一致'; return; }
+  btn.disabled = true; btn.textContent = '设置中...';
+  try {
+    const r = await origFetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: p1 })
+    });
+    if (r.ok) {
+      const d = await r.json();
+      storeAuth(d);
+      showMain();
+      init();
+    } else {
+      const body = await r.json().catch(() => ({}));
+      // v1.16.0+ 登录失败锁定（429）
+      if (r.status === 429 && body.locked) {
+        const mins = Math.ceil((body.retry_after || 60) / 60);
+        errEl.textContent = `🔒 尝试次数过多，已锁定。${mins} 分钟后重试`;
+      } else if (r.status === 429) {
+        errEl.textContent = body.error || '⏳ 请求过于频繁，请稍后重试';
+      } else {
+        errEl.textContent = body.error || `设置失败（HTTP ${r.status}）`;
+      }
+      btn.disabled = false; btn.textContent = '设置密码并登录';
+      updateSetupBtnState();
+    }
+  } catch (e) {
+    errEl.textContent = '❌ 网络错误: ' + e.message;
+    btn.disabled = false; btn.textContent = '设置密码并登录';
+    updateSetupBtnState();
+  }
+}
+
+// v1.15.0+ 账号密码登录
+async function doLoginPassword() {
+  const pwd = (document.getElementById('login-pwd-input').value || '');
+  const errEl = document.getElementById('login-pwd-error');
+  const btn = document.getElementById('login-pwd-btn');
+  if (!pwd) { errEl.textContent = '请输入密码'; return; }
+  btn.disabled = true; btn.textContent = '登录中...';
+  try {
+    const r = await origFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    if (r.ok) {
+      const d = await r.json();
+      storeAuth(d);
+      showMain();
+      init();
+    } else {
+      const body = await r.json().catch(() => ({}));
+      // v1.16.0+ 登录失败锁定（429）
+      if (r.status === 429 && body.locked) {
+        const mins = Math.ceil((body.retry_after || 60) / 60);
+        errEl.textContent = `🔒 尝试次数过多，已锁定。${mins} 分钟后重试（admin 可在 fnOS 控制台清空 ${body.ip || '该 IP'} 的失败计数）`;
+      } else if (r.status === 429) {
+        errEl.textContent = body.error || '⏳ 请求过于频繁，请稍后重试';
+      } else {
+        errEl.textContent = body.error || `登录失败（HTTP ${r.status}）`;
+      }
+      btn.disabled = false; btn.textContent = '登录';
+      updatePasswordLoginBtnState();
+    }
+  } catch (e) {
+    errEl.textContent = '❌ 登录网络错误: ' + e.message;
+    btn.disabled = false; btn.textContent = '登录';
+    updatePasswordLoginBtnState();
+  }
+}
+
+// v1.15.0+ Token 登录（备用通道，老用户或重置后用）
+async function doLoginToken() {
   const token = (document.getElementById('login-token').value || '').trim();
   const errEl = document.getElementById('login-error');
   if (!token) { errEl.textContent = '请输入 Token'; return; }
   if (token.length !== 32) { errEl.textContent = `Token 长度 ${token.length} ≠ 32，请检查粘贴是否完整`; return; }
   const btn = document.getElementById('login-btn');
   btn.disabled = true; btn.textContent = '验证中...';
-  errEl.textContent = `[登录] 发送 token (前 4 位 ${token.slice(0,4)}, 末 4 位 ${token.slice(-4)}, 长 ${token.length})…`;
   try {
     const r = await origFetch('/api/auth/login', {
       method: 'POST',
@@ -2218,16 +2951,15 @@ async function doLogin() {
       body: JSON.stringify({ token })
     });
     if (r.ok) {
-      errEl.textContent = '[登录] 后端返回 200，进入主界面…';
-      setToken(token);
+      const d = await r.json();
+      storeAuth(d);
       showMain();
-      init();  // 登录成功 → 启动主界面
+      init();
     } else {
-      // [v1.4.0+] 详细错误：HTTP 状态码 + 后端返回的 error
-      const body = await r.text().catch(()=> '');
-      errEl.textContent = `Token 错误（HTTP ${r.status}）: ${body || '(后端无返回)'}`;
+      const body = await r.json().catch(() => ({}));
+      errEl.textContent = body.error || `Token 错误（HTTP ${r.status}）`;
       btn.disabled = false; btn.textContent = '登录';
-      updateLoginBtnState();  // 根据当前字符数决定按钮是否启用
+      updateLoginBtnState();
     }
   } catch (e) {
     errEl.textContent = '❌ 登录网络错误: ' + e.message;
@@ -2236,57 +2968,54 @@ async function doLogin() {
   }
 }
 
-// 启动检查：判断显示登录页还是主界面
-(async function bootstrap() {
+// v1.15.0+ 启动检查：判断显示登录页（setup / password / token）还是主界面
+(async function initAuth() {
   document.getElementById('login-page').style.display = 'none';  // 先隐藏避免闪烁
   document.getElementById('main-page').style.display = 'none';
   try {
-    // [v1.4.0+ 调试增强] 分步输出到 #login-error，方便用户精确定位问题
-    const errEl = document.getElementById('login-error');
-    errEl.textContent = '[1/3] 检查后端鉴权状态…';
-    // 1) 后端是否就绪（用 fetch 走拦截器，让 503 错误统一处理）
-    const checkR = await fetch('/api/auth/check');
-    const checkD = await checkR.json();
-    if (!checkD.initialized) {
-      document.getElementById('auth-hint-path').textContent = checkD.path || '/vol3/@appdata/xray-proxy-native/auth.json';
-      errEl.textContent = '[1/3] 后端鉴权未初始化，5 秒后重试…';
-      showLogin();
-      // 5 秒后重试
-      setTimeout(bootstrap, 5000);
+    // 1) 后端鉴权状态（不走拦截器，原生 fetch）
+    const statusR = await origFetch('/api/auth/status');
+    const statusD = await statusR.json();
+    if (statusD.path) document.getElementById('auth-hint-path').textContent = statusD.path;
+    // 2) setup_needed → 强制设置密码
+    if (statusD.status === 'setup_needed') {
+      showLogin(null, 'setup');
       return;
     }
-    document.getElementById('auth-hint-path').textContent = checkD.path;
-    // 2) 是否有本地缓存的 token
+    // 3) password_set + 本地有 token → 验证 token
     const token = getToken();
     if (token) {
-      errEl.textContent = `[2/3] 本地有 token（长 ${token.length}，前 4 位 ${token.slice(0, 4)}），验证中…`;
-      // 尝试用缓存 token 调一个 API 验证（用 fetch 让拦截器自动加头）
       const probeR = await fetch('/api/status');
       if (probeR.ok) {
-        errEl.textContent = '';
         showMain();
         init();
         return;
       }
-      errEl.textContent = `[2/3] 本地 token 失效（HTTP ${probeR.status}），需重新登录`;
-    } else {
-      errEl.textContent = '[2/3] 本地无 token，请输入 Token 登录';
+      // token 失效 → 跳密码登录页
     }
-    // 3) 跳登录页
-    showLogin();
+    // 4) password_set + 本地无 token（或 token 失效）→ 密码登录页
+    showLogin(null, 'password');
   } catch (e) {
-    const errEl = document.getElementById('login-error');
-    errEl.textContent = `❌ 无法连接后端: ${e.message}（请检查网络或应用是否启动）`;
-    showLogin();
-    setTimeout(bootstrap, 3000);
+    const errEl = document.getElementById('login-pwd-error') || document.getElementById('setup-error') || document.getElementById('login-error');
+    if (errEl) errEl.textContent = `❌ 无法连接后端: ${e.message}（请检查网络或应用是否启动）`;
+    showLogin(null, 'password');
+    setTimeout(initAuth, 3000);
   }
 })();
 
-// 登录按钮事件
-document.getElementById('login-btn').addEventListener('click', doLogin);
-document.getElementById('login-token').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') doLogin();
-});
+// 事件绑定
+document.getElementById('setup-btn').addEventListener('click', doSetup);
+document.getElementById('setup-pwd1').addEventListener('input', updateSetupBtnState);
+document.getElementById('setup-pwd2').addEventListener('input', updateSetupBtnState);
+document.getElementById('setup-pwd1').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('setup-pwd2').focus(); });
+document.getElementById('setup-pwd2').addEventListener('keydown', function(e) { if (e.key === 'Enter') doSetup(); });
+document.getElementById('login-pwd-input').addEventListener('input', updatePasswordLoginBtnState);
+document.getElementById('login-pwd-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLoginPassword(); });
+document.getElementById('login-token').addEventListener('input', updateLoginBtnState);
+document.getElementById('login-token').addEventListener('keypress', function(e) { if (e.key === 'Enter') doLoginToken(); });
+document.getElementById('login-btn').addEventListener('click', doLoginToken);
+document.getElementById('show-token-link').addEventListener('click', function(e) { e.preventDefault(); showLogin(null, 'token'); });
+document.getElementById('show-password-link').addEventListener('click', function(e) { e.preventDefault(); showLogin(null, 'password'); });
 </script>
 </body>
 </html>

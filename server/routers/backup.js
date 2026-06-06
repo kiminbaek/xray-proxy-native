@@ -15,13 +15,17 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { wrap } = require('./_utils');
 const { logToInfo } = require('../xray/utils');
+// v1.14.0+ 导入校验：拒绝坏配置
+const { validateConfig } = require('../xray/config');
 
 const DATA_DIR = process.env.TRIM_PKGVAR || '/tmp/xray-proxy-native';
 const MAX_IMPORT_BAK = 5;
 
 // ====== v1.13.0+ 加密参数 ======
+// v1.16.0+ 升级：KDF_ITERATIONS 100000 → 600000（OWASP 2023+ PBKDF2-SHA256 推荐）
+// 向后兼容：旧备份记录 kdfIterations=100000，导入时按记录值派生（不丢失）
 const KDF_ALGO = 'pbkdf2-sha256';
-const KDF_ITERATIONS = 100000;       // PBKDF2 迭代次数（与 1Password / Bitwarden 一致）
+const KDF_ITERATIONS = 600000;       // PBKDF2 迭代次数（OWASP 2023+ 推荐 600k）
 const SALT_LEN = 16;                 // salt 长度
 const IV_LEN = 12;                   // GCM IV 长度（推荐 12 字节）
 const KEY_LEN = 32;                  // AES-256 密钥长度
@@ -158,6 +162,20 @@ router.post('/import', wrap(async (req, res) => {
   const { config, auth, traffic } = plain;
   const imported = [];
   if (config && typeof config === 'object') {
+    // v1.14.0+ 导入前校验：坏配置直接拒绝，避免污染磁盘
+    const errs = validateConfig(config);
+    if (errs.length > 0) {
+      logToInfo('[backup] 导入拒绝: 配置无效 ' + errs.join('；'));
+      return res.status(400).json({ ok: false, error: '配置无效：' + errs.join('；') + '。请检查导入的配置文件' });
+    }
+    // 额外校验：outbounds 至少 1 个用户代理节点（vless/vmess/trojan/shadowsocks）
+    // 避免导入一个"空配置"（仅系统节点）→ 启动后无代理可走
+    const REAL_PROXY_PROTOCOLS = new Set(['vless', 'vmess', 'trojan', 'shadowsocks']);
+    const hasUserNode = (config.outbounds || []).some(o => REAL_PROXY_PROTOCOLS.has(o.protocol));
+    if (!hasUserNode) {
+      logToInfo('[backup] 导入拒绝: 没有任何用户代理节点');
+      return res.status(400).json({ ok: false, error: '导入的配置没有任何用户代理节点（vless/vmess/trojan/shadowsocks）' });
+    }
     writeJsonSafe(path.join(DATA_DIR, 'xray', 'config.json'), config);
     imported.push('config');
   }

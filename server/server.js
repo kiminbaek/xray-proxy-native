@@ -1,4 +1,6 @@
 // xray-proxy-native 入口服务（v1.6.0+ 重构版）
+// v1.15.1 集成 xray 二进制：fpk 内置 xray + geo 数据，无需外网下载
+// v1.15.0 账号密码登录：首次设置密码 + Access/Refresh Token 双层鉴权
 // 负责：注册路由 + 启动 HTTP 服务 + 优雅退出
 // 业务实现拆分到 routers/ 和 xray/ 子模块
 
@@ -51,6 +53,8 @@ app.use('/api/backup', require('./routers/backup'));     // v1.9.0+ 配置导入
 app.use('/api/health', require('./routers/health'));     // v1.10.0+ 节点健康检查
 app.use('/api', require('./routers/history'));           // v1.13.0+ 节点延迟历史 (GET /api/history, /api/nodes/:tag/history)
 app.use('/api/auto-select', require('./routers/auto-select'));  // v1.13.0+ 自动选最优
+app.use('/api/notify', require('./routers/notify'));            // v1.16.0+ 通知配置/测试/历史
+app.use('/api/tun', require('./routers/tun'));                  // v1.17.0+ TUN 模式（透明代理）
 
 // ====== 静态文件 ======
 app.use(express.static(path.join(__dirname, '..', 'ui')));
@@ -97,9 +101,16 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// v1.14.0+ 兜底退出：Node.js 文档明确 uncaughtException 后进程状态不可信
+// 仅 console.error 不退出 → 内存 corruption 继续服务 → 用户拿到坏数据
+// 退出后依赖 cmd/main 守护（暂无，TODO: 后续加心跳） + fnOS install 重启
 process.on('uncaughtException', (err) => {
   console.error('uncaughtException:', err);
+  logToInfo('[FATAL] uncaughtException: ' + (err && err.message) + ' — 进程退出');
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('unhandledRejection:', reason);
+  logToInfo('[FATAL] unhandledRejection: ' + (reason && reason.message) + ' — 进程退出');
+  process.exit(1);
 });

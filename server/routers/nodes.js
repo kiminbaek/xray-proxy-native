@@ -3,6 +3,8 @@ const express = require('express');
 const router = express.Router();
 const xray = require('../xray');
 const { wrap } = require('./_utils');
+// v1.14.0+ 并发限流（共享 xray/utils.pLimit）
+const { pLimit } = require('../xray/utils');
 
 // 节点列表（v1.12.1+ 给系统节点加 system:true 标记，前端不依赖硬编码）
 const SYSTEM_TAGS = ['proxy', 'direct', 'block', 'api'];
@@ -80,12 +82,15 @@ router.post('/test-all', wrap(async (req, res) => {
   }
   if (targets.length === 0) return res.json({ ok: true, results: [] });
 
-  // 并发测速（不串行）
-  const results = await Promise.all(targets.map(async (node) => {
+  // v1.14.0+ 并发限流（p-limit 10）：避免 100 节点触发目标限流 / 本地端口耗尽
+  // 修 v1.13.0 风险：Promise.all 全部并发 → TCP 连接暴增
+  const TEST_ALL_CONCURRENCY = 10;
+  const limit = pLimit(TEST_ALL_CONCURRENCY);
+  const results = await Promise.all(targets.map((node) => limit(async () => {
     const r = await xray.testNode(node);
     if (xray.history) xray.history.recordHistory(node.tag, r.ok ? r.ms : null, r.ok);
     return { tag: node.tag, ...r };
-  }));
+  })));
   // 按延迟升序（失败的排最后）
   results.sort((a, b) => {
     if (a.ok && b.ok) return a.ms - b.ms;
