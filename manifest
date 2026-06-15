@@ -1,5 +1,5 @@
 appname               = xray-proxy-native
-version               = 1.19.2
+version               = 1.19.3
 display_name          = Xray 代理
 desc                  = <br/>Xray 代理桌面工具，为飞牛 fnOS 提供 SOCKS/HTTP 代理、节点管理、测速、流量统计、日志、备份和可选 TUN 透明代理能力。<br/><br/>默认使用 SOCKS/HTTP 代理；TUN 模式默认手动启用，不随应用启动自动恢复，适合需要透明代理的高级场景。<br/><br/>需用户自备代理节点，应用不内置免费节点。
 source                = thirdparty
