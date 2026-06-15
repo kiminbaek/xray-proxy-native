@@ -1,0 +1,43 @@
+{
+  "_comment": "v1.3.0+ 空白模板，与 config.js defaultConfig 保持一致（v1.12.0+ 统一）。新装用户请通过 Web 面板（http://<fnos>:2088）添加你的第一个节点。启动 xray 前必须配置至少一个 vless/vmess/trojan/shadowsocks 节点。",
+  "log": { "loglevel": "warning" },
+  "stats": {},
+  "api": { "tag": "api", "services": ["StatsService"] },
+  "policy": {
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
+    }
+  },
+  "inbounds": [
+    { "tag": "socks-in", "port": 10808, "protocol": "socks", "listen": "127.0.0.1", "settings": { "udp": true, "auth": "noauth" }, "sniffing": { "enabled": true, "destOverride": ["http", "tls"] } },
+    { "tag": "http-in",  "port": 10809, "protocol": "http",  "listen": "127.0.0.1", "settings": {}, "sniffing": { "enabled": true, "destOverride": ["http", "tls"] } },
+    { "tag": "api", "port": 10085, "protocol": "dokodemo-door", "listen": "127.0.0.1", "settings": { "address": "127.0.0.1" } }
+  ],
+  "outbounds": [
+    { "tag": "proxy",  "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" } },
+    { "tag": "direct", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" } },
+    { "tag": "block",  "protocol": "blackhole" },
+    { "tag": "api",    "protocol": "blackhole" }
+  ],
+  "dns": {
+    "servers": [
+      "https+local://dns.alidns.com/dns-query",
+      "https+local://dns.pub/dns-query",
+      { "address": "localhost", "skipFallback": true }
+    ],
+    "queryStrategy": "UseIP"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      { "type": "field", "inboundTag": ["api"], "outboundTag": "api" },
+      { "type": "field", "outboundTag": "direct", "domain": ["geosite:cn"] },
+      { "type": "field", "outboundTag": "direct", "ip": ["geoip:cn", "geoip:private"] },
+      { "type": "field", "outboundTag": "block",  "port": "25" },
+      { "type": "field", "outboundTag": "proxy",  "network": "tcp,udp" }
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+#!/bin/bash
+# v1.12.0+ upgrade 回调：升级后清理旧进程 + 让 cmd/main 重跑 npm install
+# 原因：之前 v1.11.0 是空脚本（exit 0），导致 v1.7.3 加 @grpc 包时老用户升级后
+#       server.js 找不到模块而崩溃。
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+XRAY_PID_FILE="${TRIM_PKGVAR}/xray/xray.pid"
+
+log_msg() {
+    [ -n "${LOG_FILE}" ] && [ -d "$(dirname ${LOG_FILE})" ] && echo "$(date '+%Y-%m-%d %H:%M:%S') - [upgrade] $1" >> ${LOG_FILE} 2>/dev/null
+}
+
+log_msg "Upgrade: cleanup and trigger npm reinstall"
+
+# v1.17.0+ TUN 安全网 层级 3：升级前先清理 TUN 残留（防止叠加导致断网）
+# 升级流程会杀 xray，但 tun 设备 + 路由表 + iptables 不会自动清
+# 必须先清，否则新版本启动 + 旧残留 = 路由冲突
+log_msg "Upgrade: pre-cleanup TUN residue before reinstall"
+ip link delete tun0 2>/dev/null || true
+ip link delete tun1 2>/dev/null || true
+ip rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
+ip rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
+ip route flush table 100 2>/dev/null || true
+ip route flush table 101 2>/dev/null || true
+iptables -t mangle -F XRAY 2>/dev/null || true
+iptables -t mangle -X XRAY 2>/dev/null || true
+iptables -t nat -F XRAY 2>/dev/null || true
+iptables -t nat -X XRAY 2>/dev/null || true
+ip6tables -t mangle -F XRAY 2>/dev/null || true
+ip6tables -t mangle -X XRAY 2>/dev/null || true
+ip6tables -t nat -F XRAY 2>/dev/null || true
+ip6tables -t nat -X XRAY 2>/dev/null || true
+# v1.17.0 v9+ 修 M50：清临**时**路**由**（tun.js start 端点加的 default dev tun0 metric 50 等 3 条）
+ip route del default dev tun0 metric 50 2>/dev/null || true
+ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del default dev tun1 metric 50 2>/dev/null || true
+ip route del 0.0.0.0/1 dev tun1 2>/dev/null || true
+ip route del 128.0.0.0/1 dev tun1 2>/dev/null || true
+log_msg "TUN pre-cleanup done"
+
+# 0. v1.12.2+ 兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
+pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
+pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
+# v1.17.0+ 兜底：杀任何用户的 /xray-bin/xray run 进程（同 install_callback）
+pkill -KILL -f "${TRIM_PKGVAR}/xray-bin/xray run" 2>/dev/null && log_msg "pkill xray-bin residual killed" || true
+# v1.17.0+ 兜底：杀任何用户的 node server.js（同 install_callback）
+pkill -KILL -f "node.*server.js" 2>/dev/null && log_msg "pkill any node server.js killed" || true
+sleep 1
+
+# 1. 按 PID 文件精确杀 node（不用 pkill -f，避免误杀 SSH）
+if [ -f "${PID_FILE}" ]; then
+    local_node_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${local_node_pid}" ] && kill -0 "${local_node_pid}" 2>/dev/null; then
+        log_msg "Killing node pid ${local_node_pid}"
+        kill -TERM "${local_node_pid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${local_node_pid}" 2>/dev/null
+    fi
+    rm -f "${PID_FILE}"
+fi
+
+# 2. 按 PID 文件精确杀 xray
+if [ -f "${XRAY_PID_FILE}" ]; then
+    local_xray_pid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${local_xray_pid}" ] && kill -0 "${local_xray_pid}" 2>/dev/null; then
+        log_msg "Killing xray pid ${local_xray_pid}"
+        kill -TERM "${local_xray_pid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${local_xray_pid}" 2>/dev/null
+    fi
+    rm -f "${XRAY_PID_FILE}"
+fi
+
+# 3. 删除 server/node_modules 和 package-lock.json（让 cmd/main install_deps 重新装）
+#    原因：升级时 package.json 可能新增了依赖（@grpc/grpc-js 等），老 node_modules 不够用
+SERVER_DIR="${TRIM_APPDEST}/server"
+if [ -d "${SERVER_DIR}/node_modules" ]; then
+    log_msg "Removing old node_modules to force reinstall"
+    rm -rf "${SERVER_DIR}/node_modules"
+fi
+[ -f "${SERVER_DIR}/package-lock.json" ] && rm -f "${SERVER_DIR}/package-lock.json"
+
+log_msg "Upgrade cleanup done, will reinstall deps on next start"
+
+# v1.17.0+ TUN 模式准备：升级后重跑 setcap（fnOS 升级会覆盖 xray 二进制，新二进制无 cap）
+# 跟 install_callback 末尾同样逻辑
+log_msg "Upgrade: setcap on xray binary for TUN mode"
+XRAY_BIN="${TRIM_APPDEST}/xray/xray"
+if [ -f "${XRAY_BIN}" ]; then
+    if command -v setcap >/dev/null 2>&1; then
+        setcap 'cap_net_admin,cap_net_raw+ep' "${XRAY_BIN}" 2>&1 | tee -a "${LOG_FILE}"
+        GETCAP_OUT=$(getcap "${XRAY_BIN}" 2>&1)
+        log_msg "getcap ${XRAY_BIN}: ${GETCAP_OUT}"
+    else
+        log_msg "WARN: setcap not in PATH, TUN mode will not work"
+    fi
+else
+    log_msg "WARN: xray binary not found at ${XRAY_BIN}, skip setcap"
+fi
+
+exit 0

@@ -1,0 +1,94 @@
+#!/bin/bash
+# 卸载回调：清理残留的 Node/xray 进程
+# v1.12.0+ 改用 PID_FILE 精确匹配，废弃 pkill -f（避免误杀 SSH session）
+#
+# 重要：本脚本必须在 sudo 下执行（应用用户 xray_proxy 权限不够杀进程）
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+XRAY_PID_FILE="${TRIM_PKGVAR}/xray/xray.pid"
+
+log_msg() {
+    [ -n "${LOG_FILE}" ] && [ -d "$(dirname ${LOG_FILE})" ] && echo "$(date '+%Y-%m-%d %H:%M:%S') - [uninstall] $1" >> ${LOG_FILE} 2>/dev/null
+}
+
+log_msg "Uninstall: cleaning up processes"
+
+# v1.12.2+ 兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
+pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
+pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
+# v1.17.0+ 兜底：杀任何用户的 /xray-bin/xray run 进程（v1.17.0 装上时 daemon 跑 root，v1.12.2+ pkill 杀不到 → 卸载后端口仍占用的 bug）
+# 注意：必须用绝对路径 "xray-bin/xray run" 匹配，避开其他 xray（如 xray 的 docker 容器、xray-core test）
+pkill -KILL -f "${TRIM_PKGVAR}/xray-bin/xray run" 2>/dev/null && log_msg "pkill xray-bin residual killed" || true
+# v1.17.0+ 兜底：杀任何用户的 node server.js（同 install_callback）
+pkill -KILL -f "node.*server.js" 2>/dev/null && log_msg "pkill any node server.js killed" || true
+sleep 1
+
+# 按 PID 文件精确杀 Node 进程
+if [ -f "${PID_FILE}" ]; then
+    uninstall_legacy_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${uninstall_legacy_pid}" ] && kill -0 "${uninstall_legacy_pid}" 2>/dev/null; then
+        kill -TERM "${uninstall_legacy_pid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${uninstall_legacy_pid}" 2>/dev/null
+        log_msg "Killed node pid ${uninstall_legacy_pid}"
+    fi
+    rm -f "${PID_FILE}"
+fi
+
+# 按 PID 文件精确杀 xray 进程
+if [ -f "${XRAY_PID_FILE}" ]; then
+    uninstall_legacy_xpid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${uninstall_legacy_xpid}" ] && kill -0 "${uninstall_legacy_xpid}" 2>/dev/null; then
+        kill -TERM "${uninstall_legacy_xpid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${uninstall_legacy_xpid}" 2>/dev/null
+        log_msg "Killed xray pid ${uninstall_legacy_xpid}"
+    fi
+    rm -f "${XRAY_PID_FILE}"
+fi
+
+log_msg "Uninstall cleanup done"
+
+# v1.17.0+ TUN 安全网 层级 2：卸载时清理 TUN 残留（防断网）
+# 卸载时 xray 已杀，但 tun 设备 + 路由表 + iptables 不会自动清
+# 必须手动清，否则用户卸载后会断网
+log_msg "Uninstall: cleanup TUN residue to prevent network loss"
+ip link delete tun0 2>/dev/null || true
+ip link delete tun1 2>/dev/null || true
+ip rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
+ip rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
+ip -6 rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
+ip -6 rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
+ip route flush table 100 2>/dev/null || true
+ip route flush table 101 2>/dev/null || true
+ip -6 route flush table 100 2>/dev/null || true
+ip -6 route flush table 101 2>/dev/null || true
+iptables -t mangle -F XRAY 2>/dev/null || true
+iptables -t mangle -X XRAY 2>/dev/null || true
+iptables -t nat -F XRAY 2>/dev/null || true
+iptables -t nat -X XRAY 2>/dev/null || true
+ip6tables -t mangle -F XRAY 2>/dev/null || true
+ip6tables -t mangle -X XRAY 2>/dev/null || true
+ip6tables -t nat -F XRAY 2>/dev/null || true
+ip6tables -t nat -X XRAY 2>/dev/null || true
+# v1.17.0 v9+ 修 M50：清临**时**路**由**（tun.js start 端点加的 default dev tun0 metric 50 等 3 条）
+ip route del default dev tun0 metric 50 2>/dev/null || true
+ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del default dev tun1 metric 50 2>/dev/null || true
+ip route del 0.0.0.0/1 dev tun1 2>/dev/null || true
+ip route del 128.0.0.0/1 dev tun1 2>/dev/null || true
+log_msg "TUN residue cleaned up"
+
+# v1.17.0+ v13 修 M73：调 backup_network.sh 恢复原始 default route（保险起见）
+# v9 修复 M50 备份了但没真恢复，v13 让 uninstall 调一下 backup_network.sh
+if [ -f "${TRIM_PKGVAR}/backup_network.sh" ]; then
+    log_msg "Uninstall: 调用 backup_network.sh 恢复 default route"
+    bash "${TRIM_PKGVAR}/backup_network.sh" >> "${LOG_FILE}" 2>&1
+    log_msg "Uninstall: backup_network.sh 执行完成"
+else
+    log_msg "WARN: backup_network.sh 不在 ${TRIM_PKGVAR}/，跳过恢复 default route"
+fi
+
+exit 0

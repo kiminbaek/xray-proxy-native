@@ -1,0 +1,28 @@
+#!/bin/sh
+# with-proxy v1.11.0+ — 命令行代理包裹器
+# 用法：with-proxy <命令> [参数...]
+# 例：  with-proxy curl https://google.com
+#       with-proxy apt update
+#       with-proxy git clone https://github.com/xxx
+#
+# 原理：LD_PRELOAD 注入 proxychains-ng 的 .so，让 connect()/getaddrinfo()
+#       自动走 xray SOCKS5（127.0.0.1:10808）
+#
+# 安全：不动 iptables、不改 /etc、不动 systemd
+#       停用 xray-proxy-native 后，with-proxy 立即失效（连不上 10808）
+
+# 获取脚本真实路径（处理软链）
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+BIN_DIR="$(dirname "$SCRIPT_PATH")"
+
+# 注入 proxychains
+export LD_PRELOAD="$BIN_DIR/libproxychains4.so:${LD_PRELOAD}"
+export PROXYCHAINS_QUIET_MODE=1
+export PROXYCHAINS_CONF_FILE="$BIN_DIR/proxychains.conf"
+
+# 友好提示（仅交互式 shell）
+if [ -t 1 ] && [ "${WITHPROXY_HUSH:-0}" != "1" ]; then
+    echo "[with-proxy] 走 xray 代理: $*" >&2
+fi
+
+exec "$@"

@@ -1,0 +1,184 @@
+#!/bin/bash
+# 安装回调：清理上一次安装的残留进程（防止升级时端口被占）
+# v1.12.0+ 改用 PID_FILE 精确匹配，废弃 pkill -f（避免误杀 SSH session）
+#
+# 重要：本脚本必须在 sudo 下执行（应用用户 xray_proxy 权限不够杀进程）
+
+# v1.17.0+ v15 修 M76：装 conntrack 包（包名是 conntrack 不是 conntrack-tools）
+# 原因：v14 backup_network.sh [6/8] 步 if/else 检查 conntrack 命令时，fnOS 默认没装 → 走 echo 分支
+#      conntrack 残留没真清 → 卸载后入站断网（必须重启飞牛恢复）
+# 解决：v15 装上时自动 apt install conntrack（只装一个 binary，无 daemon，副作用小）
+if ! command -v conntrack >/dev/null 2>&1; then
+    apt install -y conntrack 2>&1 | tail -3 || echo "WARN: apt install conntrack failed (offline or repo down)"
+fi
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+XRAY_PID_FILE="${TRIM_PKGVAR}/xray/xray.pid"
+
+log_msg() {
+    [ -n "${LOG_FILE}" ] && [ -d "$(dirname ${LOG_FILE})" ] && echo "$(date '+%Y-%m-%d %H:%M:%S') - [install] $1" >> ${LOG_FILE} 2>/dev/null
+}
+
+log_msg "Install: cleaning up leftover processes from previous install"
+
+# v1.12.2+ 兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH，因为 SSH 不属于 xray_proxy 用户）
+# 解决 PID_FILE 缺失/失效时旧进程残留占端口的 bug（v1.12.0/v1.12.1 教训）
+pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
+pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
+# v1.17.0+ 兜底：杀任何用户的 /xray-bin/xray run 进程（v3 装上时 xray 跑 root，v1.12.2+ pkill 杀不到 → 端口占用的 bug）
+# 注意：必须用绝对路径 "xray-bin/xray run" 匹配，避开其他 xray（如 xray 的 docker 容器、xray-core test）
+pkill -KILL -f "${TRIM_PKGVAR}/xray-bin/xray run" 2>/dev/null && log_msg "pkill xray-bin residual killed" || true
+# v1.17.0+ 兜底：杀任何用户的 node server.js（v4/v5 装上时 node 也可能跑 root → 端口占用的 bug）
+# 用 "node.*server.js" 匹配避免误杀其他 node 进程（如 npm start / node app.js 等）
+pkill -KILL -f "node.*server.js" 2>/dev/null && log_msg "pkill any node server.js killed" || true
+sleep 1
+
+# 按 PID 文件精确杀残留（首选，速度快）
+if [ -f "${PID_FILE}" ]; then
+    install_legacy_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${install_legacy_pid}" ] && kill -0 "${install_legacy_pid}" 2>/dev/null; then
+        kill -TERM "${install_legacy_pid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${install_legacy_pid}" 2>/dev/null
+        log_msg "Killed node pid ${install_legacy_pid}"
+    fi
+    rm -f "${PID_FILE}"
+fi
+if [ -f "${XRAY_PID_FILE}" ]; then
+    install_legacy_xpid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+    if [ -n "${install_legacy_xpid}" ] && kill -0 "${install_legacy_xpid}" 2>/dev/null; then
+        kill -TERM "${install_legacy_xpid}" 2>/dev/null
+        sleep 1
+        kill -KILL "${install_legacy_xpid}" 2>/dev/null
+        log_msg "Killed xray pid ${install_legacy_xpid}"
+    fi
+    rm -f "${XRAY_PID_FILE}"
+fi
+
+log_msg "Install cleanup done"
+
+# v1.17.0+ TUN 模式准备：给 xray 二进制授权 cap_net_admin + cap_net_raw
+# 原因：方案 B（run-as: package）下 xray 二进制由 xray_proxy 用户跑，没有 root cap
+#      TUN 模式需要 /dev/net/tun open（cap_net_raw）+ 路由表修改（cap_net_admin）
+#      通过 setcap 给二进制本身授权 file capability，exec 时自动获取
+# 参考：mihomo fpk 的 cmd/service-setup.service_postinst 同样逻辑
+log_msg "Install: setcap on xray binary for TUN mode"
+XRAY_BIN="${TRIM_APPDEST}/xray/xray"
+if [ -f "${XRAY_BIN}" ]; then
+    if command -v setcap >/dev/null 2>&1; then
+        setcap 'cap_net_admin,cap_net_raw+ep' "${XRAY_BIN}" 2>&1 | tee -a "${LOG_FILE}"
+        # 验证：getcap 必须能输出 cap_net_admin,cap_net_raw+ep
+        GETCAP_OUT=$(getcap "${XRAY_BIN}" 2>&1)
+        log_msg "getcap ${XRAY_BIN}: ${GETCAP_OUT}"
+    else
+        log_msg "WARN: setcap not in PATH, TUN mode will not work"
+    fi
+else
+    log_msg "WARN: xray binary not found at ${XRAY_BIN}, skip setcap"
+fi
+
+# v1.17.0+ TUN 安全网 层级 1：备份原始网络配置
+# 原因：TUN 模式会改路由表 + iptables，万一应用退出有残留需要恢复
+# 备份：default route (gw + iface) + DNS
+# 输出：${TRIM_PKGVAR}/network_backup.conf（应用通过 API 读取）+ backup_network.sh（用户手动恢复用）
+log_msg "Install: backup network config for TUN safety"
+mkdir -p "${TRIM_PKGVAR}"
+DEFAULT_GW=$(ip route 2>/dev/null | grep '^default' | head -1 | awk '{print $3}')
+DEFAULT_IFACE=$(ip route 2>/dev/null | grep '^default' | head -1 | awk '{print $5}')
+ORIGINAL_DNS=$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ' | sed 's/ $//')
+cat > "${TRIM_PKGVAR}/network_backup.conf" <<EOF
+# v1.17.0+ TUN 模式网络备份（自动生成）
+# 备份时间：$(date -Iseconds)
+DEFAULT_GW="${DEFAULT_GW}"
+DEFAULT_IFACE="${DEFAULT_IFACE}"
+ORIGINAL_DNS="${ORIGINAL_DNS}"
+EOF
+log_msg "Network backup: gw=${DEFAULT_GW} iface=${DEFAULT_IFACE} dns=${ORIGINAL_DNS}"
+
+# v1.17.0+ TUN 安全网 层级 6：生成用户手动恢复脚本
+log_msg "Install: generate backup_network.sh"
+cat > "${TRIM_PKGVAR}/backup_network.sh" <<'SHEOF'
+#!/bin/bash
+# v1.17.0+ TUN 模式手动恢复脚本（自动生成）
+# 用法：sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh
+# 场景：TUN 模式出问题 / 卸载不干净 / 断网 / xray 崩溃残留
+set +e
+CONF="/vol3/@appdata/xray-proxy-native/network_backup.conf"
+[ -f "${CONF}" ] && source "${CONF}"
+echo "[1/6] 删 TUN 设备..."
+ip link delete tun0 2>/dev/null
+ip link delete tun1 2>/dev/null
+echo "[2/6] 清路由表（xray 加的 fwmark rule + 独立 table）..."
+ip rule del fwmark 0x1/0x1 table 100 2>/dev/null
+ip rule del fwmark 0x1/0x1 table 101 2>/dev/null
+ip -6 rule del fwmark 0x1/0x1 table 100 2>/dev/null
+ip -6 rule del fwmark 0x1/0x1 table 101 2>/dev/null
+ip route flush table 100 2>/dev/null
+ip route flush table 101 2>/dev/null
+ip -6 route flush table 100 2>/dev/null
+ip -6 route flush table 101 2>/dev/null
+echo "[3/6] 清 iptables..."
+iptables -t mangle -F XRAY 2>/dev/null
+iptables -t mangle -X XRAY 2>/dev/null
+iptables -t nat -F XRAY 2>/dev/null
+iptables -t nat -X XRAY 2>/dev/null
+ip6tables -t mangle -F XRAY 2>/dev/null
+ip6tables -t mangle -X XRAY 2>/dev/null
+ip6tables -t nat -F XRAY 2>/dev/null
+ip6tables -t nat -X XRAY 2>/dev/null
+echo "[4/6] 杀残留 xray 进程..."
+pkill -9 -f "xray run" 2>/dev/null
+echo "[5/7] 删临时路由（v1.17.0 v9+ 修 M50：tun.js start 端点加的 default dev tun0 metric 50 等 3 条）..."
+ip route del default dev tun0 metric 50 2>/dev/null
+ip route del 0.0.0.0/1 dev tun0 2>/dev/null
+ip route del 128.0.0.0/1 dev tun0 2>/dev/null
+# v1.17.0+ v15 修 M76：清 conntrack 表（防卸载后入站命中老 conntrack 路由到不存在的 tun0）
+# v9 修复 M50 + v13 修复 M73 都没考虑 conntrack：xray TUN 长期运行后 conntrack 积累大量 xray 处理过的连接 entry
+# 卸载时 xray 杀 + tun0 删后，conntrack entry 不会自动清（默认 ESTABLISHED 超时 5 天）
+# 入站连接命中老 conntrack 会按老路由回程（已不存在的 tun0）→ 断网 / 连上自己断
+# 修复 1 (v14)：尝试 conntrack -F（失败因 fnOS 默认没装 conntrack）
+# 修复 2 (v15)：install_callback 装上时自动 apt install conntrack；此处直接 conntrack -F + sysctl 兜底
+echo "[6/8] 清 conntrack 表（v15 修 M76：v15 装时已自动装 conntrack，直接 -F）..."
+ORIG_EST_TIMEOUT=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
+if command -v conntrack >/dev/null 2>&1; then
+    conntrack -F 2>&1 && echo "  ✅ conntrack 表已清" || echo "  ⚠️ conntrack -F 失败（fallback sysctl）"
+else
+    echo "  ℹ️ conntrack 未装，sysctl 兜底：让 ESTABLISHED entry 立即超时"
+    # 改 established timeout = 1 秒，让所有 ESTABLISHED 立即老化
+    # 副作用：会断用户 SSH 会话 + 所有活跃 TCP；5 秒后改回原值
+    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=1 >/dev/null 2>&1
+    sleep 5
+    sysctl -w "net.netfilter.nf_conntrack_tcp_timeout_established=${ORIG_EST_TIMEOUT:-432000}" >/dev/null 2>&1
+    echo "  ✅ sysctl trick 完成（原值已恢复）"
+fi
+# v1.17.0+ v13 修 M73：恢复原始 default route（防止 main table 原始 default via 被某种方式清掉后断网）
+# v9 修复 M50 备份了 DEFAULT_GW/DEFAULT_IFACE，但 backup_network.sh 没真恢复——v13 修
+echo "[7/8] 恢复原始 default route..."
+if [ -n "${DEFAULT_GW}" ] && [ -n "${DEFAULT_IFACE}" ]; then
+    if ! ip route show default 2>/dev/null | grep -q "via ${DEFAULT_GW}"; then
+        ip route add default via ${DEFAULT_GW} dev ${DEFAULT_IFACE} metric 100 2>/dev/null && \
+            echo "  ✅ default via ${DEFAULT_GW} dev ${DEFAULT_IFACE} 已恢复" || \
+            echo "  ⚠️ 恢复 default route 失败（请手动: ip route add default via ${DEFAULT_GW} dev ${DEFAULT_IFACE}）"
+    else
+        echo "  ℹ️ default route 仍在（via ${DEFAULT_GW}），跳过"
+    fi
+else
+    echo "  ⚠️ 未找到 DEFAULT_GW/DEFAULT_IFACE 备份，跳过恢复"
+fi
+# DNS 不恢复（fnOS 用 systemd-resolved 管理 /etc/resolv.conf，乱改会破坏系统）
+echo "  ℹ️ DNS 由 systemd-resolved 管理，无需手动恢复"
+echo "[8/8] 验证网络..."
+echo "请执行: ping -c 3 8.8.8.8 验证网络"
+echo "✅ 清理完成"
+# v1.17.0+ v14 修 M75：若卸载后入站仍有问题，手动清 conntrack 表
+echo ""
+echo "💡 提示：如果卸载后入站仍异常（飞牛下载正常但连不上飞牛），执行："
+echo "   sudo bash ${TRIM_PKGVAR}/backup_network.sh   # 再跑一次"
+echo "   sudo conntrack -F                             # 清 conntrack 表（需装 conntrack-tools）"
+echo "   sudo reboot                                   # 兜底：重启飞牛"
+SHEOF
+chmod +x "${TRIM_PKGVAR}/backup_network.sh"
+log_msg "backup_network.sh generated"
+
+exit 0

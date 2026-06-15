@@ -1,0 +1,309 @@
+#!/bin/bash
+# xray-proxy-native 生命周期管理
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+XRAY_PID_FILE="${TRIM_PKGVAR}/xray/xray.pid"
+AUTH_FILE="${TRIM_PKGVAR}/auth.json"
+PORT="${TRIM_PORT:-2088}"
+
+# Node.js 运行时（fnOS 系统依赖装在固定路径）
+export PATH=/var/apps/nodejs_v22/target/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+SERVER_DIR="${TRIM_APPDEST}/server"
+XRAY_SOURCE_DIR="${TRIM_APPDEST}/xray"          # fpk 内 xray 资源（app/xray/ 解包后位置）
+XRAY_BIN_DIR="${TRIM_PKGVAR}/xray-bin"          # 运行时 xray 位置（持久化）
+XRAY_BIN="${XRAY_BIN_DIR}/xray"
+GEOIP_FILE="${XRAY_BIN_DIR}/geoip.dat"
+GEOSITE_FILE="${XRAY_BIN_DIR}/geosite.dat"
+
+# 必须：把 TRIM_* 传给 Node.js 子进程
+export TRIM_PKGVAR
+export TRIM_APPDEST
+export TRIM_TEMP_LOGFILE="${LOG_FILE}"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
+}
+
+ensure_dirs() {
+    mkdir -p "${TRIM_PKGVAR}/xray" "${XRAY_BIN_DIR}"
+}
+
+# 首次启动 / xray 资源缺失时，从 fpk 拷贝 xray 二进制和数据文件
+# 拷贝到 PKGVAR（持久化）而不是 fpk 内的 target（只读）
+ensure_xray_binary() {
+    if [ -x "${XRAY_BIN}" ] && [ -f "${GEOIP_FILE}" ] && [ -f "${GEOSITE_FILE}" ]; then
+        return 0
+    fi
+    log_msg "Copying xray binary and data files from fpk..."
+    if [ ! -f "${XRAY_SOURCE_DIR}/xray" ]; then
+        log_msg "ERROR: xray binary not found in fpk: ${XRAY_SOURCE_DIR}/xray"
+        return 1
+    fi
+    cp "${XRAY_SOURCE_DIR}/xray" "${XRAY_BIN}" || { log_msg "cp xray failed"; return 1; }
+    chmod +x "${XRAY_BIN}"
+    [ -f "${XRAY_SOURCE_DIR}/geoip.dat" ] && cp "${XRAY_SOURCE_DIR}/geoip.dat" "${GEOIP_FILE}"
+    [ -f "${XRAY_SOURCE_DIR}/geosite.dat" ] && cp "${XRAY_SOURCE_DIR}/geosite.dat" "${GEOSITE_FILE}"
+    log_msg "xray binary copied to ${XRAY_BIN}"
+    return 0
+}
+
+# 生成 / 复用鉴权 Token（v1.3.0+）
+# 首次启动：生成 32 字符 base64url token，写入 ${TRIM_PKGVAR}/auth.json，权限 0600
+# 同时打印到日志（用户首次登录从 info.log 抄）
+# 后续启动：auth.json 已存在则跳过
+ensure_auth_token() {
+    local auth_file="${TRIM_PKGVAR}/auth.json"
+    if [ -f "${auth_file}" ]; then
+        return 0
+    fi
+    log_msg "Generating auth token (first run)..."
+    # 用 node 生成（保证字符集和长度）
+    local token
+    token=$(node -e "process.stdout.write(require('crypto').randomBytes(24).toString('base64url'))")
+    if [ -z "$token" ]; then
+        log_msg "ERROR: failed to generate auth token"
+        return 1
+    fi
+    local created_at
+    created_at=$(date -Iseconds)
+    cat > "${auth_file}" <<EOF
+{
+  "token": "${token}",
+  "created": "${created_at}",
+  "version": "1.0"
+}
+EOF
+    chmod 600 "${auth_file}" 2>/dev/null
+    log_msg "============================================================"
+    log_msg "  AUTH TOKEN GENERATED (v1.3.0+):"
+    log_msg "  ${token}"
+    log_msg "  Please enter this token on the login page."
+    log_msg "  Also stored in: ${auth_file}"
+    log_msg "============================================================"
+    return 0
+}
+
+# 状态检查：先看 PID 文件，再实际探活
+check_running() {
+    if [ -f "${PID_FILE}" ]; then
+        local pid
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "$pid" ] && kill -0 "${pid}" 2>/dev/null; then
+            return 0
+        fi
+        # 进程已死，清理 stale PID 文件
+        rm -f "${PID_FILE}"
+    fi
+    return 1
+}
+
+# 装依赖：仅当 node_modules 不存在或 package.json 比新时才装
+# 关键：xray_proxy 用户的 HOME (/home/xray_proxy) 不存在，npm 默认缓存会失败
+# 必须把 npm_config_prefix 和 npm_config_cache 重定向到 PKGHOME 下
+install_deps() {
+    local need_install=0
+    if [ ! -d "${SERVER_DIR}/node_modules" ]; then
+        need_install=1
+        log_msg "node_modules missing, need install"
+    elif [ "${SERVER_DIR}/package.json" -nt "${SERVER_DIR}/node_modules" ]; then
+        need_install=1
+        log_msg "package.json updated, reinstalling"
+    fi
+
+    if [ $need_install -eq 0 ]; then
+        return 0
+    fi
+
+    # 重定向 npm 工作目录到 PKGHOME（应用用户有写权限的位置）
+    local npm_prefix="${TRIM_PKGHOME}/.npm"
+    local npm_cache="${TRIM_PKGHOME}/.npm-cache"
+    mkdir -p "${npm_prefix}" "${npm_cache}" 2>/dev/null
+    export npm_config_prefix="${npm_prefix}"
+    export npm_config_cache="${npm_cache}"
+    # 也设置 HOME 避免 npm 找 ~/.npm
+    export HOME="${TRIM_PKGHOME}"
+
+    log_msg "Running npm install (timeout 120s, prefix=${npm_prefix})..."
+    cd "${SERVER_DIR}"
+    timeout 120 npm install --omit=dev --prefer-offline --no-audit --no-fund >> ${LOG_FILE} 2>&1
+    local rc=$?
+    if [ $rc -ne 0 ]; then
+        log_msg "npm install failed (exit $rc)"
+        return 1
+    fi
+    if [ ! -d "${SERVER_DIR}/node_modules/express" ]; then
+        log_msg "express not found after install"
+        return 1
+    fi
+    log_msg "npm install OK"
+    return 0
+}
+
+start_process() {
+    ensure_dirs
+    if check_running; then
+        log_msg "Already running (pid $(head -n 1 ${PID_FILE}))"
+        return 0
+    fi
+
+    # 启动前先清理可能残留的进程（升级/重装场景）
+    # 避免端口被占
+    # v1.12.0+ 改用 PID_FILE 精确匹配，避免 pkill -f 误杀 SSH session
+    if [ -f "${PID_FILE}" ]; then
+        local_legacy_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${local_legacy_pid}" ] && kill -0 "${local_legacy_pid}" 2>/dev/null; then
+            kill -KILL "${local_legacy_pid}" 2>/dev/null
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    if [ -f "${XRAY_PID_FILE}" ]; then
+        local_legacy_xpid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${local_legacy_xpid}" ] && kill -0 "${local_legacy_xpid}" 2>/dev/null; then
+            kill -KILL "${local_legacy_xpid}" 2>/dev/null
+        fi
+        rm -f "${XRAY_PID_FILE}"
+    fi
+    sleep 1
+
+    # 装依赖（首次或 package.json 变化时）
+    if ! install_deps; then
+        log_msg "Failed to install dependencies, aborting"
+        return 1
+    fi
+
+    # 拷贝 xray 二进制和数据文件到 PKGVAR
+    if ! ensure_xray_binary; then
+        log_msg "Failed to setup xray binary, aborting"
+        return 1
+    fi
+
+    # v1.3.0+ 鉴权：生成 / 复用 Token（首次打印到 info.log）
+    if ! ensure_auth_token; then
+        log_msg "Failed to setup auth token, aborting"
+        return 1
+    fi
+
+    # 把 xray 路径透给 Node.js（xray.js 会优先读这个环境变量）
+    export XRAY_BINARY_PATH="${XRAY_BIN}"
+    export XRAY_GEOIP_PATH="${GEOIP_FILE}"
+    export XRAY_GEOSITE_PATH="${GEOSITE_FILE}"
+
+    log_msg "Starting proxy manager..."
+    # 后台启动 Node.js
+    cd "${SERVER_DIR}" && node server.js >> ${LOG_FILE} 2>&1 &
+    local new_pid=$!
+    printf "%s" "$new_pid" > ${PID_FILE}
+
+    # 验证进程能存活 3 秒（足够覆盖 Node 启动 + 模块加载）
+    local count=0
+    while [ $count -lt 3 ]; do
+        if ! kill -0 "${new_pid}" 2>/dev/null; then
+            log_msg "Failed: Node.js exited within 3s"
+            rm -f "${PID_FILE}"
+            return 1
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+
+    log_msg "Started successfully (pid ${new_pid})"
+
+    # v1.12.2+ 自动启动 xray：等 Node 接受 HTTP 后调 /api/start
+    # 解决 v1.12.0/v1.12.1 装上后 xray 不自动起的问题
+    if [ -f "${AUTH_FILE}" ]; then
+        local auth_token
+        # v1.17.0+ v13: 兼容 pretty-print auth.json（v1.15.0+ 改成多行格式，冒号后有空格）
+        # 原版 grep -o '"token":"[^"]*"' 不匹配 "token": "xxx"（有空格）
+        auth_token=$(grep -oE '"token"[[:space:]]*:[[:space:]]*"[^"]*"' "${AUTH_FILE}" 2>/dev/null | head -n 1 | sed -E 's/.*"token"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+        if [ -n "${auth_token}" ]; then
+            sleep 2  # 等 Node listen
+            local http_code
+            http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer ${auth_token}" \
+                -X POST "http://127.0.0.1:${PORT}/api/start" 2>/dev/null)
+            if [ "$http_code" = "200" ]; then
+                log_msg "Auto-started xray via /api/start (HTTP 200)"
+            else
+                log_msg "Auto-start xray returned HTTP ${http_code} (probably '配置为空' or '已在运行中' — 用户后续可手动点启动)"
+            fi
+        else
+            log_msg "Skip auto-start: auth token not found in ${AUTH_FILE}"
+        fi
+    else
+        log_msg "Skip auto-start: ${AUTH_FILE} not found"
+    fi
+    return 0
+}
+
+stop_process() {
+    log_msg "Stopping proxy manager..."
+
+    # v1.12.2+ 兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
+    pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
+    pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
+    sleep 1
+
+    # 优先通过 /api/stop 让 Node 优雅清理 xray
+    local node_pid=""
+    if [ -f "${PID_FILE}" ]; then
+        node_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    fi
+
+    if [ -n "$node_pid" ] && kill -0 "${node_pid}" 2>/dev/null; then
+        # 触发 Node 内部清理（SIGTERM 会触发 xray cleanup）
+        kill -TERM "${node_pid}" 2>/dev/null
+        local count=0
+        while kill -0 "${node_pid}" 2>/dev/null && [ $count -lt 8 ]; do
+            sleep 1
+            count=$((count + 1))
+        done
+        if kill -0 "${node_pid}" 2>/dev/null; then
+            log_msg "Node still alive, force killing"
+            kill -KILL "${node_pid}" 2>/dev/null
+            sleep 1
+        fi
+    fi
+
+    # 兜底：直接杀 xray 进程（如果 Node 已经死了但 xray 残留）
+    if [ -f "${XRAY_PID_FILE}" ]; then
+        local xray_pid
+        xray_pid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+        if [ -n "$xray_pid" ] && kill -0 "${xray_pid}" 2>/dev/null; then
+            log_msg "Killing orphan xray (pid ${xray_pid})"
+            kill -TERM "${xray_pid}" 2>/dev/null
+            sleep 1
+            kill -KILL "${xray_pid}" 2>/dev/null
+        fi
+        rm -f "${XRAY_PID_FILE}"
+    fi
+
+    # 兜底：按 PID 文件精确杀（v1.12.0+ 不再用 pkill -f，避免误杀 SSH）
+    if [ -f "${PID_FILE}" ]; then
+        local_legacy_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${local_legacy_pid}" ] && kill -0 "${local_legacy_pid}" 2>/dev/null; then
+            kill -TERM "${local_legacy_pid}" 2>/dev/null
+            sleep 1
+            kill -KILL "${local_legacy_pid}" 2>/dev/null
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    if [ -f "${XRAY_PID_FILE}" ]; then
+        local_legacy_xpid=$(head -n 1 "${XRAY_PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${local_legacy_xpid}" ] && kill -0 "${local_legacy_xpid}" 2>/dev/null; then
+            kill -TERM "${local_legacy_xpid}" 2>/dev/null
+            sleep 1
+            kill -KILL "${local_legacy_xpid}" 2>/dev/null
+        fi
+        rm -f "${XRAY_PID_FILE}"
+    fi
+    log_msg "Stopped"
+}
+
+case $1 in
+    start)   start_process ;;
+    stop)    stop_process ;;
+    restart) stop_process; sleep 1; start_process ;;
+    status)  if check_running; then exit 0; else exit 3; fi ;;
+    *)       echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
