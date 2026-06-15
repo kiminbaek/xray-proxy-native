@@ -243,6 +243,72 @@ router.get('/status', wrap(async (req, res) => {
   });
 }));
 
+
+// GET /api/tun/diagnose - 只读 TUN 诊断：不启用 TUN、不改路由、不清理残留
+router.get('/diagnose', wrap(async (req, res) => {
+  const tunConfig = config.getTunConfig();
+  const xrayStatus = xray.getStatus();
+  const execFile = require('child_process').execFile;
+  const run = (cmd, args, timeout) => new Promise((resolve) => {
+    execFile(cmd, args || [], { timeout: timeout || 2000 }, (err, stdout, stderr) => {
+      resolve({ cmd: [cmd].concat(args || []).join(' '), ok: !err, code: err && typeof err.code !== 'undefined' ? err.code : 0, stdout: String(stdout || '').slice(0, 8000), stderr: String(stderr || '').slice(0, 2000) });
+    });
+  });
+  const esc = (v) => String(v || 'tun0').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const checks = [];
+  const devTun = fs.existsSync('/dev/net/tun');
+  const devExists = checkTunDevice(tunConfig.name);
+  checks.push({ name: 'tun_config_enabled', ok: tunConfig.enabled === true, value: tunConfig.enabled, level: tunConfig.enabled ? 'warn' : 'ok', message: tunConfig.enabled ? 'TUN 配置处于启用状态' : 'TUN 配置未启用' });
+  checks.push({ name: 'tun_auto_start', ok: tunConfig.autoStart === true, value: tunConfig.autoStart, level: tunConfig.autoStart ? 'warn' : 'ok', message: tunConfig.autoStart ? 'TUN 设置为随应用自动启动' : 'TUN 不会随应用自动启动' });
+  checks.push({ name: 'dev_net_tun', ok: devTun, value: devTun, level: devTun ? 'ok' : 'bad', message: devTun ? '/dev/net/tun 存在' : '/dev/net/tun 不存在' });
+  checks.push({ name: 'tun_device', ok: devExists, value: tunConfig.name || 'tun0', level: devExists ? 'warn' : 'ok', message: devExists ? '发现 TUN 设备，可能正在运行或有残留' : '未发现配置中的 TUN 设备' });
+  const route = await run('/sbin/ip', ['route', 'show']);
+  const link = await run('/sbin/ip', ['link', 'show']);
+  const iptables = await run('/usr/sbin/iptables', ['-S']);
+  const ps = await run('/bin/ps', ['-ef']);
+  const hasXrayChain = /\bXRAY\b/.test(iptables.stdout || '');
+  const hasTunRoute = new RegExp('\\b' + esc(tunConfig.name || 'tun0') + '\\b').test(route.stdout || '');
+  checks.push({ name: 'xray_iptables_chain', ok: hasXrayChain, value: hasXrayChain, level: hasXrayChain ? 'warn' : 'ok', message: hasXrayChain ? 'iptables 中发现 XRAY 链' : 'iptables 未发现 XRAY 链' });
+  checks.push({ name: 'tun_route', ok: hasTunRoute, value: hasTunRoute, level: hasTunRoute ? 'warn' : 'ok', message: hasTunRoute ? '路由表中发现 TUN 设备路由' : '路由表未发现 TUN 设备路由' });
+  const bad = checks.filter(c => c.level === 'bad').length;
+  const warn = checks.filter(c => c.level === 'warn').length;
+  res.json({ ok: true, ts: Date.now(), config: tunConfig, xray: { running: xrayStatus.running, pid: xrayStatus.pid }, summary: { bad, warn, safe: bad === 0 && warn === 0 }, checks, commands: { route, link, iptables, process: { cmd: ps.cmd, ok: ps.ok, stdout: (ps.stdout || '').split('\n').filter(l => /xray|xray-proxy-native|node server\.js/.test(l)).join('\n'), stderr: ps.stderr } }, advice: ['默认建议保持 TUN 关闭，优先使用 SOCKS/HTTP。', '启用 TUN 前确认已保存网络备份。', '发现 XRAY 链或 TUN 路由残留时，再手动点击清理残留。'] });
+}));
+
+// GET /api/tun/diagnostic-package - 一键导出诊断包（只读采集）
+router.get('/diagnostic-package', wrap(async (req, res) => {
+  const execFile = require('child_process').execFile;
+  const run = (cmd, args, timeout) => new Promise((resolve) => {
+    execFile(cmd, args || [], { timeout: timeout || 2500 }, (err, stdout, stderr) => {
+      resolve({ cmd: [cmd].concat(args || []).join(' '), ok: !err, code: err && typeof err.code !== 'undefined' ? err.code : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
+    });
+  });
+  const pkg = {
+    app: 'xray-proxy-native',
+    version: '1.20.0',
+    exportedAt: new Date().toISOString(),
+    note: '只读诊断包：不包含 auth token、不包含节点密钥明文、不执行清理/启用操作',
+    status: xray.getStatus(),
+    tunConfig: config.getTunConfig(),
+    tunDeviceExists: checkTunDevice(config.getTunConfig().name),
+    commands: {
+      ipAddr: await run('/sbin/ip', ['addr', 'show']),
+      ipRoute: await run('/sbin/ip', ['route', 'show']),
+      ipRule: await run('/sbin/ip', ['rule', 'show']),
+      iptables: await run('/usr/sbin/iptables', ['-S']),
+      ps: await run('/bin/ps', ['-ef'])
+    }
+  };
+  const raw = JSON.stringify(pkg, null, 2)
+    .replace(/("token"\s*:\s*")[^"]+/ig, '$1***')
+    .replace(/("password"\s*:\s*")[^"]+/ig, '$1***')
+    .replace(/("password_hash"\s*:\s*")[^"]+/ig, '$1***')
+    .replace(/("id"\s*:\s*")[0-9a-f-]{20,}/ig, '$1***');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="xray-proxy-native-diagnostic-1.20.0.json"');
+  res.send(raw);
+}));
+
 // GET /api/tun/backup - 返 backup_network.sh 路径 + 手动恢复指南
 router.get('/backup', wrap(async (req, res) => {
   // 触发一次备份（确保最新）

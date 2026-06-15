@@ -169,14 +169,23 @@ async function getTraffic(xrayProcess) {
   }
   state.total_out = result;
   state.total_in = resultIn;
-  // 合计（outbound）—— v1.10.0+ 必须先算好 totalUp/Down 再传给 recordHistory
-  let totalUp = 0, totalDown = 0;
-  for (const tag of Object.keys(result)) {
-    totalUp += result[tag].up;
-    totalDown += result[tag].down;
+  // 合计（v1.20.0）：页面总流量优先使用 inbound（用户实际通过 SOCKS/HTTP/TUN 消费）
+  // outbound 统计保留给节点排行；部分 Xray 配置不会产生 outbound stats，不能再用它作为总量唯一来源。
+  let inUp = 0, inDown = 0;
+  for (const tag of Object.keys(resultIn)) {
+    inUp += resultIn[tag].up;
+    inDown += resultIn[tag].down;
   }
-  // v1.10.0+ 24h 历史：每小时记一个数据点
-  recordHistory(state, totalUp, totalDown, result);
+  let outUp = 0, outDown = 0;
+  for (const tag of Object.keys(result)) {
+    outUp += result[tag].up;
+    outDown += result[tag].down;
+  }
+  const hasInbound = (inUp + inDown) > 0;
+  const totalUp = hasInbound ? inUp : outUp;
+  const totalDown = hasInbound ? inDown : outDown;
+  // v1.10.0+ 24h 历史：每小时记一个数据点；优先记录用户实际消费流量
+  recordHistory(state, totalUp, totalDown, hasInbound ? resultIn : result);
   writeTrafficState(state);
   // v1.7.0+ 按流量降序排序（用户最关心哪些节点用得多）
   const sorted = Object.keys(result)
@@ -188,7 +197,14 @@ async function getTraffic(xrayProcess) {
     traffic: result,         // 兼容旧版（按 tag key 索引）
     traffic_sorted: sorted,  // v1.7.0+ 按流量降序
     inbound: resultIn,       // v1.7.0+ 用户实际消费流量
-    total: { up: totalUp, down: totalDown, total: totalUp + totalDown }
+    total: {
+      up: totalUp,
+      down: totalDown,
+      total: totalUp + totalDown,
+      source: hasInbound ? 'inbound' : 'outbound'
+    },
+    total_outbound: { up: outUp, down: outDown, total: outUp + outDown },
+    total_inbound: { up: inUp, down: inDown, total: inUp + inDown }
   };
 }
 
