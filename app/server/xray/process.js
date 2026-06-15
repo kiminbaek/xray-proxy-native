@@ -223,7 +223,7 @@ function startXray(customBinary) {
         const tunCfg = getTunConfig();
         if (tunCfg && tunCfg.enabled) {
           logToInfo('[守护] TUN 模式启用中，xray 意外退出 → 立即清理 TUN 残留防断网');
-          const cleanupResult = cleanupTun();
+          const cleanupResult = cleanupTun(tunCfg.name);
           logToInfo(`[守护] TUN 清理完成: ok=${cleanupResult.ok}`);
           // v1.17.0 v9+ 修 M50：清临**时**路**由**（**tun.js start 端点加的 default dev tun0 metric 50 等 3 条）
           // 防止 tun 设备删除后临**时**路**由**还**指**向**不**存**在**的** tun0 = 断**网**

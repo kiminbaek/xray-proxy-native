@@ -349,13 +349,29 @@ function applyTunToConfig(enabled, tunConfig) {
 // 应用启动失败 / 关闭 TUN / xray 崩溃 / 卸载 时调用
 // 清理：tun 设备 + 路由表 + iptables mangle/nat chain + 残留 xray 进程
 // 注意：不修改 default route（即便 xray 改过也只删 xray 加的 fwmark rule + 独立 table）
-function cleanupTun() {
+function safeTunNames(name) {
+  const names = [];
+  const add = (n) => {
+    if (typeof n === 'string' && /^[a-zA-Z0-9_-]{1,16}$/.test(n) && !names.includes(n)) names.push(n);
+  };
+  add(name);
+  add('tun0');
+  add('tun1');
+  return names;
+}
+
+function cleanupTun(name) {
   const { execSync } = require('child_process');
   const { logToInfo } = require('./utils');
+  const tunNames = safeTunNames(name || (getTunConfig() || {}).name);
   const cmds = [
-    // 1. 删 TUN 设备
-    'ip link delete tun0 2>/dev/null || true',
-    'ip link delete tun1 2>/dev/null || true',
+    // 1. 删 TUN 设备 + 临时路由（支持自定义设备名，保留 tun0/tun1 兜底）
+    ...tunNames.flatMap(n => [
+      `ip route del default dev ${n} metric 50 2>/dev/null || true`,
+      `ip route del 0.0.0.0/1 dev ${n} 2>/dev/null || true`,
+      `ip route del 128.0.0.0/1 dev ${n} 2>/dev/null || true`,
+      `ip link delete ${n} 2>/dev/null || true`
+    ]),
     // 2. 清路由表（不删 default route，只删 xray 加的 fwmark rule + 独立 table）
     'ip rule del fwmark 0x1/0x1 table 100 2>/dev/null || true',
     'ip rule del fwmark 0x1/0x1 table 101 2>/dev/null || true',
@@ -433,9 +449,14 @@ function backupNetworkConfig() {
 # 用法：sudo bash ${shPath}
 # 场景：TUN 模式出问题 / 卸载不干净 / 断网
 set +e  # 不因个别错误退出
-echo "[1/5] 删 TUN 设备..."
-ip link delete tun0 2>/dev/null
-ip link delete tun1 2>/dev/null
+TUN_NAME="$(node -e 'try{const f="/vol3/@appdata/xray-proxy-native/tun.json";const j=require(f);if(/^[a-zA-Z0-9_-]{1,16}$/.test(j.name||""))process.stdout.write(j.name)}catch(e){}' 2>/dev/null)"
+echo "[1/5] 删 TUN 设备和临时路由..."
+for dev in "\${TUN_NAME:-tun0}" tun0 tun1; do
+  ip route del default dev "$dev" metric 50 2>/dev/null
+  ip route del 0.0.0.0/1 dev "$dev" 2>/dev/null
+  ip route del 128.0.0.0/1 dev "$dev" 2>/dev/null
+  ip link delete "$dev" 2>/dev/null
+done
 echo "[2/5] 清路由表（xray 加的 fwmark rule + 独立 table）..."
 ip rule del fwmark 0x1/0x1 table 100 2>/dev/null
 ip rule del fwmark 0x1/0x1 table 101 2>/dev/null

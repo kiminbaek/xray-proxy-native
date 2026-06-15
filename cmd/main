@@ -236,15 +236,42 @@ start_process() {
     return 0
 }
 
+cleanup_tun_residue() {
+    local tun_name="tun0"
+    if [ -f "${TRIM_PKGVAR}/tun.json" ]; then
+        tun_name=$(node -e "try{const j=require('${TRIM_PKGVAR}/tun.json'); if (/^[a-zA-Z0-9_-]{1,16}$/.test(j.name||'')) process.stdout.write(j.name)}catch(e){}" 2>/dev/null)
+        [ -n "${tun_name}" ] || tun_name="tun0"
+    fi
+    for dev in "${tun_name}" tun0 tun1; do
+        ip route del default dev "$dev" metric 50 2>/dev/null || true
+        ip route del 0.0.0.0/1 dev "$dev" 2>/dev/null || true
+        ip route del 128.0.0.0/1 dev "$dev" 2>/dev/null || true
+        ip link delete "$dev" 2>/dev/null || true
+    done
+    ip rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
+    ip rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
+    ip -6 rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
+    ip -6 rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
+    ip route flush table 100 2>/dev/null || true
+    ip route flush table 101 2>/dev/null || true
+    ip -6 route flush table 100 2>/dev/null || true
+    ip -6 route flush table 101 2>/dev/null || true
+    iptables -t mangle -F XRAY 2>/dev/null || true
+    iptables -t mangle -X XRAY 2>/dev/null || true
+    iptables -t nat -F XRAY 2>/dev/null || true
+    iptables -t nat -X XRAY 2>/dev/null || true
+    ip6tables -t mangle -F XRAY 2>/dev/null || true
+    ip6tables -t mangle -X XRAY 2>/dev/null || true
+    ip6tables -t nat -F XRAY 2>/dev/null || true
+    ip6tables -t nat -X XRAY 2>/dev/null || true
+    log_msg "TUN residue cleanup done (dev=${tun_name})"
+}
+
 stop_process() {
     log_msg "Stopping proxy manager..."
 
-    # v1.12.2+ 兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
-    pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
-    pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
-    sleep 1
-
-    # 优先通过 /api/stop 让 Node 优雅清理 xray
+    # 优先给 Node SIGTERM，让 server.js / lifecycle 有机会关闭 xray 并清理 TUN。
+    # 不在这里先 pkill -KILL，否则会绕过 TUN 清理导致残留路由断网。
     local node_pid=""
     if [ -f "${PID_FILE}" ]; then
         node_pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
@@ -297,6 +324,13 @@ stop_process() {
         fi
         rm -f "${XRAY_PID_FILE}"
     fi
+
+    # TUN 高风险兜底：无论 Node 是否优雅退出，停止应用时都清理 TUN 残留。
+    cleanup_tun_residue
+
+    # 最后兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
+    pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
+    pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
     log_msg "Stopped"
 }
 

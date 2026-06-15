@@ -162,8 +162,8 @@ router.post('/start', wrap(async (req, res) => {
   status.setStartingUp(true);
   try {
     // 启动前先清理 TUN 残留（防叠加 + 防御）
-    const cleanup = config.cleanupTun();
     const tunConfig = config.getTunConfig();
+    const cleanup = config.cleanupTun(tunConfig.name);
     const result = config.applyTunToConfig(true, tunConfig);
     logToInfo(`[tun] starting TUN mode: name=${tunConfig.name}, MTU=${tunConfig.MTU}`);
     // v1.17.0+ 必须用 restartXray（SIGUSR2 热加载不会重新创建 TUN 设备，导致 tun0 不出现）
@@ -207,7 +207,7 @@ router.post('/stop', wrap(async (req, res) => {
     // v1.17.0+ 必须用 restartXray（同 start 端点）
     const reloadResult = await xray.restartXray();
     // 关闭后清理残留（不依赖 xray 是否完全停止）
-    const cleanup = config.cleanupTun();
+    const cleanup = config.cleanupTun(tunConfig.name);
     res.json({
       ok: true,
       enabled: false,
@@ -273,7 +273,8 @@ router.get('/backup', wrap(async (req, res) => {
 // 用于：xray 崩溃、UI 卡住、用户主动恢复
 router.post('/cleanup', wrap(async (req, res) => {
   logToInfo('[tun] manual cleanup triggered');
-  const cleanup = config.cleanupTun();
+  const tunConfig = config.getTunConfig();
+  const cleanup = config.cleanupTun(tunConfig.name);
   res.json({
     ok: cleanup.ok,
     cleanup: cleanup,

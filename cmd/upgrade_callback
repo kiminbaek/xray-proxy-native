@@ -17,8 +17,18 @@ log_msg "Upgrade: cleanup and trigger npm reinstall"
 # 升级流程会杀 xray，但 tun 设备 + 路由表 + iptables 不会自动清
 # 必须先清，否则新版本启动 + 旧残留 = 路由冲突
 log_msg "Upgrade: pre-cleanup TUN residue before reinstall"
-ip link delete tun0 2>/dev/null || true
-ip link delete tun1 2>/dev/null || true
+
+TUN_NAME="tun0"
+if [ -f "${TRIM_PKGVAR}/tun.json" ]; then
+    TUN_NAME=$(node -e "try{const j=require('${TRIM_PKGVAR}/tun.json'); if (/^[a-zA-Z0-9_-]{1,16}$/.test(j.name||'')) process.stdout.write(j.name)}catch(e){}" 2>/dev/null)
+    [ -n "${TUN_NAME}" ] || TUN_NAME="tun0"
+fi
+for dev in "${TUN_NAME}" tun0 tun1; do
+    ip route del default dev "$dev" metric 50 2>/dev/null || true
+    ip route del 0.0.0.0/1 dev "$dev" 2>/dev/null || true
+    ip route del 128.0.0.0/1 dev "$dev" 2>/dev/null || true
+    ip link delete "$dev" 2>/dev/null || true
+done
 ip rule del fwmark 0x1/0x1 table 100 2>/dev/null || true
 ip rule del fwmark 0x1/0x1 table 101 2>/dev/null || true
 ip route flush table 100 2>/dev/null || true

@@ -9,6 +9,7 @@ const path = require('path');
 const xray = require('./xray');
 const auth = require('./auth');
 const errorStats = require('./error_stats');
+const xrayConfig = require('./xray/config');
 const { logToInfo, closeLogStreams } = require('./xray/utils');
 
 const app = express();
@@ -86,9 +87,23 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   health.startScheduler();
 });
 
+function cleanupTunForShutdown() {
+  try {
+    const tunCfg = xrayConfig.getTunConfig();
+    if (tunCfg && tunCfg.enabled) {
+      logToInfo(`[tun] server shutdown: cleanup TUN residue (${tunCfg.name})`);
+      xrayConfig.applyTunToConfig(false, tunCfg);
+      xrayConfig.cleanupTun(tunCfg.name);
+    }
+  } catch (e) {
+    logToInfo('[tun] server shutdown cleanup failed: ' + (e && e.message));
+  }
+}
+
 // 优雅退出
 function shutdown(signal) {
   console.log(`收到 ${signal}，正在清理...`);
+  cleanupTunForShutdown();
   xray.cleanup();
   closeLogStreams();
   server.close(() => {
@@ -107,10 +122,12 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
   console.error('uncaughtException:', err);
   logToInfo('[FATAL] uncaughtException: ' + (err && err.message) + ' — 进程退出');
+  cleanupTunForShutdown();
   process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('unhandledRejection:', reason);
   logToInfo('[FATAL] unhandledRejection: ' + (reason && reason.message) + ' — 进程退出');
+  cleanupTunForShutdown();
   process.exit(1);
 });
