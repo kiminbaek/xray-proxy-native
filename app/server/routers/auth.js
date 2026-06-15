@@ -88,25 +88,7 @@ router.post('/login', wrap(async (req, res) => {
       retry_after: Math.ceil(lockStatus.retryAfterMs / 1000)
     });
   }
-  // 模式 1：token 登录（兼容 v1.14.0 老用户，不计入失败锁定）
-  if (token && typeof token === 'string') {
-    if (!auth.verifyToken(token)) {
-      return res.status(401).json({ ok: false, error: 'Token 错误' });
-    }
-    // 顺便给老用户发 refresh token（如果还没生成过）
-    let refresh = auth.loadRefreshToken();
-    if (!refresh) refresh = auth.rotateRefreshToken();
-    // 登录成功 → 清除该 IP 的失败记录
-    auth.clearFailedLogin(ip);
-    return res.json({
-      ok: true,
-      token,
-      refresh_token: refresh.token,
-      refresh_expires: refresh.expires,
-      access_ttl: auth.getAccessTokenTtl()
-    });
-  }
-  // 模式 2：账号密码登录
+  // 模式 1：账号密码登录（v1.20.1 起优先 password，避免前端同时提交 token/password 时误走 token 分支）
   if (password && typeof password === 'string') {
     if (!auth.hasPassword()) {
       return res.status(400).json({ ok: false, error: '尚未设置密码，请先设置密码', setup_needed: true });
@@ -138,6 +120,25 @@ router.post('/login', wrap(async (req, res) => {
     return res.json({
       ok: true,
       token: auth.loadToken(),
+      refresh_token: refresh.token,
+      refresh_expires: refresh.expires,
+      access_ttl: auth.getAccessTokenTtl()
+    });
+  }
+
+  // 模式 2：token 登录（兼容 v1.14.0 老用户，不计入失败锁定）
+  if (token && typeof token === 'string') {
+    if (!auth.verifyToken(token)) {
+      return res.status(401).json({ ok: false, error: 'Token 错误' });
+    }
+    // 顺便给老用户发 refresh token（如果还没生成过）
+    let refresh = auth.loadRefreshToken();
+    if (!refresh) refresh = auth.rotateRefreshToken();
+    // 登录成功 → 清除该 IP 的失败记录
+    auth.clearFailedLogin(ip);
+    return res.json({
+      ok: true,
+      token,
       refresh_token: refresh.token,
       refresh_expires: refresh.expires,
       access_ttl: auth.getAccessTokenTtl()
