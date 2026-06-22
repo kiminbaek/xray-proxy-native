@@ -17,3 +17,86 @@
 .mobileNav button{padding:12px 16px;border-radius:18px;white-space:nowrap;font-weight:800;min-width:auto}
 .mobileNav button.active{background:linear-gradient(135deg,var(--blue),var(--sky));color:white;box-shadow:0 14px 34px rgba(47,107,255,.28);border:none}
 .topActions{gap:10px;padding:8px 10px}
+
+/* v1.22.0 新增样式 */
+
+/* Toast */
+.toastContainer{position:fixed;top:24px;right:24px;z-index:999;display:grid;gap:12px}
+.toast{background:#fff;padding:16px 20px;border-radius:16px;box-shadow:0 12px 40px rgba(15,23,42,.18);display:flex;align-items:center;gap:12px;animation:slideIn .3s ease;border-left:4px solid var(--toast-color)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+.toastIcon{width:28px;height:28px;border-radius:50%;background:var(--toast-color);color:#fff;display:grid;place-items:center;font-weight:900;font-size:14px}
+.toastText{font-weight:700;color:#0f172a}
+
+/* Skeleton */
+.skeleton{background:linear-gradient(90deg,#e2e8f0 25%,#f1f5f9 50%,#e2e8f0 75%);background-size:200% 100%;animation:skeleton 1.5s infinite}
+@keyframes skeleton{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* Quick Actions */
+.quickActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px}
+.quickAction{padding:20px 16px;border-radius:20px;border:none;background:rgba(255,255,255,.7);cursor:pointer;transition:all .25s ease;display:grid;gap:10px;text-align:center}
+.quickAction:hover{transform:translateY(-4px);box-shadow:0 16px 44px rgba(15,23,42,.12)}
+.quickAction.active{background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 70%,#fff));color:#fff;box-shadow:0 12px 32px rgba(15,23,42,.15)}
+.quickAction.active .quickLabel{color:#fff}
+.quickIcon{font-size:28px;font-weight:900;color:var(--accent)}
+.quickAction.active .quickIcon{color:#fff}
+.quickLabel{font-weight:800;color:#334155}
+
+/* Stat Card */
+.statGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.statCard{padding:20px;border-radius:20px;background:rgba(255,255,255,.72)}
+.statHead{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.statIcon{width:34px;height:34px;border-radius:12px;background:linear-gradient(135deg,rgba(47,107,255,.1),rgba(34,199,238,.1));display:grid;place-items:center;font-weight:900;color:#2f6bff}
+.statLabel{font-weight:800;color:#475569;font-size:14px}
+.statValue{display:flex;align-items:baseline;gap:6px}
+.statValue b{font-size:34px;font-weight:900;color:#0f172a;line-height:1}
+.statValue span{font-weight:800;color:#64748b;font-size:14px}
+
+/* Health Card */
+.healthCard{padding:8px}
+.healthItem{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px}
+.healthItem:hover{background:rgba(15,23,42,.04)}
+.healthStatus{width:28px;font-weight:900;font-size:18px}
+.healthLabel{font-weight:800;color:#334155}
+.healthValue{margin-left:auto;font-weight:900;color:#0f172a}
+
+/* Node Card Enhanced */
+.nodeGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.nodeCard{transition:all .3s ease;overflow:hidden}
+.nodeCard:hover{transform:translateY(-3px);box-shadow:0 20px 60px rgba(15,23,42,.15)}
+.nodeCard.active{border:2px solid #2f6bff}
+.nodeCardHead{display:flex;align-items:center;gap:14px;padding:16px 16px 12px}
+.nodeCardIcon{width:48px;height:48px;border-radius:16px;display:grid;place-items:center;font-weight:900;font-size:18px;color:#334155}
+.nodeCardInfo{flex:1;display:grid;gap:3px}
+.nodeCardName{font-weight:900;color:#0f172a;font-size:15px}
+.nodeCardAddr{font-size:13px;color:#64748b;font-weight:700}
+.nodeCardActions{margin-left:auto;display:flex;gap:6px}
+.nodeBadge{padding:5px 10px;border-radius:999px;color:#fff;font-weight:900;font-size:11px}
+.nodeCardMeta{display:flex;gap:16px;padding:8px 16px 16px;border-top:1px solid rgba(15,23,42,.06)}
+.nodeCardMeta span{font-size:13px;font-weight:800;color:#64748b}
+.activeBadge{background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(47,107,255,.08));color:#10b981;padding:12px;border-radius:14px;font-weight:900;text-align:center;margin:0 16px 16px}
+
+/* Big Status */
+.bigStatus{padding:10px 20px;border-radius:999px;font-weight:900;font-size:14px}
+.bigStatus.up{background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(34,199,238,.1));color:#10b981;box-shadow:0 0 0 1px rgba(16,185,129,.2) inset}
+.bigStatus.down{background:rgba(239,68,68,.12);color:#ef4444;box-shadow:0 0 0 1px rgba(239,68,68,.2) inset}
+
+/* Side Stats */
+.sideStat{display:flex;align-items:center;gap:10px;padding:8px 0}
+.sideStat b{width:24px;color:#94a3b8}
+.sideStat span{font-size:13px;font-weight:800;color:#94a3b8}
+
+/* 移动端适配增强 */
+@media(max-width:768px){
+  .quickActions{grid-template-columns:repeat(2,1fr)}
+  .statGrid{grid-template-columns:repeat(2,1fr)}
+  .nodeGrid{grid-template-columns:1fr}
+  .mobileNav{display:flex;overflow-x:auto;padding:14px;gap:10px;background:rgba(255,255,255,.85);backdrop-filter:blur(20px)}
+  .mobileNav button{flex:0 0 auto;padding:12px 14px;border-radius:16px;white-space:nowrap;font-weight:800;border:none;background:transparent;color:#475569}
+  .mobileNav button.active{background:linear-gradient(135deg,#2f6bff,#22c7ee);color:#fff;box-shadow:0 10px 26px rgba(47,107,255,.22)}
+  .toastContainer{right:16px;left:16px;top:16px}
+}
+
+@media(min-width:769px){
+  .mobileNav{display:none}
+}
+
