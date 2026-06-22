@@ -1,420 +1,90 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { createRoot } from 'react-dom/client'
-import './styles.css'
+import React, {useEffect, useMemo, useState} from 'react';
+import { createRoot } from 'react-dom/client';
+import { Activity, Bell, Boxes, CheckCircle2, ChevronRight, CircleDot, Download, Gauge, Globe2, HardDriveDownload, LifeBuoy, Lock, Network, Play, RefreshCw, Rocket, Save, Server, Settings, ShieldCheck, Square, TerminalSquare, Trash2, Upload, Wifi, Zap } from 'lucide-react';
+import './styles.css';
 
-// 页面列表
-const pages = [
-  { id: 'dash', label: '总览', icon: '◉', color: '#2f6bff' },
-  { id: 'nodes', label: '节点', icon: '▢', color: '#22c7ee' },
-  { id: 'network', label: '网络', icon: '◈', color: '#7c3aed' },
-  { id: 'traffic', label: '流量', icon: '◫', color: '#10b981' },
-  { id: 'enhance', label: '增强', icon: '⚡', color: '#f59e0b' },
-  { id: 'diagnose', label: '诊断', icon: '✓', color: '#f97316' },
-  { id: 'logs', label: '日志', icon: '☰', color: '#64748b' },
-  { id: 'backup', label: '备份', icon: '⟳', color: '#8b5cf6' },
-  { id: 'settings', label: '设置', icon: '⚙', color: '#94a3b8' },
-]
-
-// Toast 组件
-const Toast = ({ message, type, onClose }) => {
-  useEffect(() => {
-    const t = setTimeout(onClose, 3000)
-    return () => clearTimeout(t)
-  }, [onClose])
-  const colors = { success: '#10b981', error: '#ef4444', info: '#2f6bff' }
-  return (
-    <div className="toast" style={{ '--toast-color': colors[type] }}>
-      <span className="toastIcon">{type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
-      <span className="toastText">{message}</span>
-    </div>
-  )
+const NAV=[['dash','总览',Gauge,'运行、节点与网络状态总控'],['nodes','节点',Network,'代理节点资产与健康详情'],['network','网络模式',Wifi,'SOCKS/HTTP 推荐，TUN 手动确认'],['traffic','流量',Activity,'实时统计、入站与节点流量'],['enhance','增强',Zap,'自动选优、通知和趋势'],['diagnose','诊断',LifeBuoy,'TUN 诊断、安全向导和诊断包'],['logs','日志',TerminalSquare,'实时运行日志中心'],['backup','备份',HardDriveDownload,'导入、导出和恢复'],['settings','设置',Settings,'版本、会话和偏好']];
+const navMeta=Object.fromEntries(NAV.map(([id,title,Icon,sub])=>[id,{title,Icon,sub}]));
+const tokenKey='xray_token', refreshKey='xray_refresh';
+const fmtBytes=n=>{n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';if(n<1073741824)return(n/1048576).toFixed(1)+' MB';return(n/1073741824).toFixed(2)+' GB'};
+const proto=n=>n?.protocol||'-'; const addr=n=>n?.settings?.vnext?.[0]?.address||n?.settings?.servers?.[0]?.address||'-'; const port=n=>n?.settings?.vnext?.[0]?.port||n?.settings?.servers?.[0]?.port||'-'; const uid=n=>n?.settings?.vnext?.[0]?.users?.[0]?.id||n?.settings?.servers?.[0]?.password||'';
+function systemOnly(n){let t=n?.tag,p=n?.protocol;return ['direct','block','api'].includes(t)||(['freedom','blackhole','dns'].includes(p)&&t!=='proxy')}
+function StatusPill({state,children}){return <span className={'statusPill '+(state||'') }><i/> {children}</span>}
+function Button({kind='',size='',icon:Icon,children,...props}){return <button className={`btn ${kind} ${size}`} {...props}>{Icon&&<Icon size={16}/>}<span>{children}</span></button>}
+function Card({title,sub,icon:Icon,action,children,className=''}){return <section className={'card '+className}><header className="cardHead"><div>{Icon&&<span className="cardIcon"><Icon size={17}/></span>}<div><h2>{title}</h2>{sub&&<p>{sub}</p>}</div></div>{action}</header><div className="cardBody">{children}</div></section>}
+function Empty({title='暂无数据',sub='完成配置后会显示在这里。'}){return <div className="emptyState"><CircleDot size={28}/><b>{title}</b><span>{sub}</span></div>}
+function Field({label,children,wide=false}){return <label className={'field '+(wide?'wide':'')}><span>{label}</span>{children}</label>}
+function App(){
+  const [token,setToken]=useState(localStorage.getItem(tokenKey)||''); const [setup,setSetup]=useState(false); const [authed,setAuthed]=useState(false); const [loginErr,setLoginErr]=useState(''); const [pwd,setPwd]=useState('');
+  const [view,setView]=useState('dash'); const [toast,setToast]=useState(''); const [foot,setFoot]=useState('就绪'); const [busy,setBusy]=useState(false);
+  const [status,setStatus]=useState({}); const [nodes,setNodes]=useState([]); const [allNodes,setAllNodes]=useState([]); const [sel,setSel]=useState(null); const [tun,setTun]=useState({config:{}}); const [traffic,setTraffic]=useState({}); const [history,setHistory]=useState([]); const [logs,setLogs]=useState(''); const [auto,setAuto]=useState({config:{}}); const [notify,setNotify]=useState({config:{channels:{}}}); const [notifyLog,setNotifyLog]=useState([]); const [trend,setTrend]=useState({}); const [diag,setDiag]=useState(null); const [tunBak,setTunBak]=useState('');
+  const [nodeModal,setNodeModal]=useState(false); const [importModal,setImportModal]=useState(false); const [nodeForm,setNodeForm]=useState({tag:'',protocol:'vless',address:'',port:'443',id:'',network:'tcp',security:'tls',extra:''}); const [importText,setImportText]=useState(''); const [importPreview,setImportPreview]=useState(null); const [importTest,setImportTest]=useState(true);
+  const [tunForm,setTunForm]=useState({name:'tun0',MTU:1500,gateway:'172.19.0.1',DNS:'8.8.8.8,1.1.1.1',autoOutboundsInterface:'',autoStart:'false'});
+  const [autoForm,setAutoForm]=useState({enabled:false,stableCount:3,minInterval:30,avgWindow:5,maxLatency:5000}); const [notifyForm,setNotifyForm]=useState({tg:false,tgToken:'',tgChat:'',wx:false,wxUrl:'',sc:false,scKey:''}); const [bakPwd,setBakPwd]=useState(''); const [bakPwd2,setBakPwd2]=useState(''); const [bakFile,setBakFile]=useState(null);
+  function flash(m){setToast(m);setTimeout(()=>setToast(''),2600)}
+  async function api(path,opt={}){let r=await fetch(path,{...opt,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(opt.headers||{})}});let d=await r.json().catch(()=>({ok:false,error:'非 JSON 响应'}));if(r.status===401&&!path.startsWith('/api/auth/')){logout();throw Error('登录已过期，请重新输入密码')}if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));return d}
+  function logout(){localStorage.removeItem(tokenKey);localStorage.removeItem(refreshKey);setToken('');setAuthed(false)}
+  useEffect(()=>{fetch('/api/auth/status').then(r=>r.json()).then(s=>{let need=s.status==='setup_needed'||s.hasPassword===false;setSetup(need); if(token){setAuthed(true)} }).catch(()=>{if(token)setAuthed(true)})},[]);
+  useEffect(()=>{if(authed) refreshAll()},[authed]);
+  async function login(){if(!pwd.trim())return; setLoginErr(''); try{let d=await api(setup?'/api/auth/setup':'/api/auth/login',{method:'POST',body:JSON.stringify({password:pwd.trim()})}); if(!d.token)throw Error('登录成功但服务端未返回 token'); localStorage.setItem(tokenKey,d.token); if(d.refresh_token)localStorage.setItem(refreshKey,d.refresh_token); setToken(d.token); setPwd(''); setAuthed(true)}catch(e){setLoginErr(e.message||'登录失败')}}
+  async function refreshAll(){setBusy(true);setFoot('刷新中…');await Promise.allSettled([loadStatus(),loadNodes(),loadTun(),loadTraffic(),loadLogs(),loadEnhance(),loadDiagnose()]);setFoot('就绪');setBusy(false)}
+  async function loadStatus(){try{setStatus(await api('/api/status'))}catch{setStatus({unknown:true})}}
+  async function runAction(a){try{setFoot(a+'...');await api('/api/'+a,{method:'POST'});flash('操作完成');setTimeout(refreshAll,900)}catch(e){flash(e.message);setFoot('操作失败')}}
+  async function loadNodes(){try{let d=await api('/api/nodes');let all=d.nodes||[], real=all.filter(n=>!systemOnly(n));setAllNodes(all);setNodes(real);setSel(s=> real.find(n=>n.tag===s?.tag)||real[0]||null)}catch(e){flash('节点加载失败：'+e.message)}}
+  async function saveNode(){try{let extra=nodeForm.extra.trim()?JSON.parse(nodeForm.extra):{};let pt=parseInt(nodeForm.port,10);let node={tag:nodeForm.tag.trim(),protocol:nodeForm.protocol,settings:{},streamSettings:{network:nodeForm.network||'tcp',security:nodeForm.security||'none'},...extra};if(!node.tag||!nodeForm.address.trim()||!pt)throw Error('tag/地址/端口必填');if(['vless','vmess'].includes(node.protocol))node.settings={vnext:[{address:nodeForm.address.trim(),port:pt,users:[{id:nodeForm.id.trim(),alterId:0,encryption:'none'}]}]};else if(node.protocol==='trojan')node.settings={servers:[{address:nodeForm.address.trim(),port:pt,password:nodeForm.id.trim()}]};else node.settings={servers:[{address:nodeForm.address.trim(),port:pt,password:nodeForm.id.trim(),method:'aes-128-gcm'}]};await api(sel?('/api/nodes/'+encodeURIComponent(sel.tag)):'/api/nodes',{method:sel?'PUT':'POST',body:JSON.stringify(node)});setNodeModal(false);flash('节点已保存');loadNodes()}catch(e){flash(e.message)}}
+  function openNode(n=null){setSel(n);setNodeForm(n?{tag:n.tag||'',protocol:proto(n),address:addr(n),port:String(port(n)||443),id:uid(n),network:n.streamSettings?.network||'tcp',security:n.streamSettings?.security||'none',extra:''}:{tag:'',protocol:'vless',address:'',port:'443',id:'',network:'tcp',security:'tls',extra:''});setNodeModal(true)}
+  async function toggleNode(tag,en){try{await api('/api/nodes/'+encodeURIComponent(tag)+'/toggle',{method:'POST',body:JSON.stringify({enabled:en})});loadNodes()}catch(e){flash(e.message)}}
+  async function delNode(tag){if(!confirm('删除节点 '+tag+' ?'))return;try{await api('/api/nodes/'+encodeURIComponent(tag),{method:'DELETE'});setSel(null);flash('已删除');loadNodes()}catch(e){flash(e.message)}}
+  async function testNode(tag){try{let d=await api('/api/nodes/'+encodeURIComponent(tag)+'/test',{method:'POST'});flash(d.ms?`延迟 ${d.ms}ms`:(d.latency?`延迟 ${d.latency}ms`:'测试完成'));loadNodes()}catch(e){flash(e.message)}}
+  async function testAll(){try{flash('开始批量测速');await api('/api/nodes/test-all',{method:'POST',body:'{}'});flash('测速完成');loadNodes()}catch(e){flash(e.message)}}
+  async function previewImport(){try{if(!importText.trim())return flash('请先粘贴节点链接或订阅 URL');setImportPreview(await api('/api/nodes/import',{method:'POST',body:JSON.stringify({text:importText.trim(),mode:'preview',duplicate:'rename'})}))}catch(e){flash(e.message)}}
+  async function importLinks(){try{if(!importText.trim())return flash('请先粘贴节点链接或订阅 URL');let r=await api('/api/nodes/import',{method:'POST',body:JSON.stringify({text:importText.trim(),mode:'import',duplicate:'rename',test:importTest})});setImportModal(false);setImportText('');setImportPreview(null);flash(`导入完成：成功 ${r.success} 个，失败 ${r.failed} 个`);loadNodes()}catch(e){flash(e.message)}}
+  async function loadTun(){try{let d=await api('/api/tun/config');let st=await api('/api/tun/status').catch(()=>({}));let cfg=d.config||{};setTun({...d,status:st});setTunForm({name:cfg.name||'tun0',MTU:cfg.MTU||1500,gateway:(cfg.gateway||['172.19.0.1']).join(','),DNS:(cfg.DNS||['8.8.8.8','1.1.1.1']).join(','),autoOutboundsInterface:cfg.autoOutboundsInterface||'',autoStart:String(!!cfg.autoStart)})}catch(e){setTun({error:e.message,config:{}})}}
+  async function saveTun(){try{await api('/api/tun/config',{method:'POST',body:JSON.stringify({name:tunForm.name,MTU:+tunForm.MTU,gateway:tunForm.gateway.split(',').map(x=>x.trim()).filter(Boolean),DNS:tunForm.DNS.split(',').map(x=>x.trim()).filter(Boolean),autoOutboundsInterface:tunForm.autoOutboundsInterface,autoStart:tunForm.autoStart==='true'})});flash('TUN 设置已保存');loadTun()}catch(e){flash(e.message)}}
+  async function tunAct(a){if(a==='start'&&!confirm('TUN 会接管本机路由，确认启用？'))return;if(a==='cleanup'&&!confirm('强制清理 TUN 残留？'))return;try{await api('/api/tun/'+a,{method:'POST'});flash('操作完成');setTimeout(refreshAll,1000)}catch(e){flash(e.message)}}
+  async function loadTraffic(){try{let d=await api('/api/traffic');setTraffic(d);let h=await api('/api/traffic/history').catch(()=>({history:[]}));setHistory(h.history||[])}catch(e){setTraffic({error:e.message})}}
+  async function loadEnhance(){await Promise.allSettled([loadAuto(),loadNotify(),loadTrend()])}
+  async function loadAuto(){try{let d=await api('/api/auto-select'),c=d.config||{};setAuto(d);setAutoForm({enabled:!!c.enabled,stableCount:c.stableCount||3,minInterval:Math.round((c.minIntervalMs||30000)/1000),avgWindow:c.avgWindow||5,maxLatency:c.maxLatency||5000})}catch(e){setAuto({error:e.message,config:{}})}}
+  async function saveAuto(){try{await api('/api/auto-select/config',{method:'POST',body:JSON.stringify({enabled:autoForm.enabled,stableCount:+autoForm.stableCount,minIntervalMs:+autoForm.minInterval*1000,avgWindow:+autoForm.avgWindow,maxLatency:+autoForm.maxLatency})});flash('自动选优已保存');loadAuto()}catch(e){flash(e.message)}}
+  async function autoNow(){try{let d=await api('/api/auto-select/now',{method:'POST'});flash('已切换到 '+(d.optimal||'-'));loadNodes();loadAuto()}catch(e){flash(e.message)}}
+  async function loadNotify(){try{let d=await api('/api/notify/config'),c=d.config||{},ch=c.channels||{};setNotify(d);setNotifyForm({tg:!!ch.telegram?.enabled,tgToken:'',tgChat:ch.telegram?.chatId||'',wx:!!ch.wechatWork?.enabled,wxUrl:'',sc:!!ch.serverchan?.enabled,scKey:''});let l=await api('/api/notify/log').catch(()=>({log:[]}));setNotifyLog(l.log||[])}catch(e){setNotify({error:e.message,config:{channels:{}}})}}
+  async function saveNotify(){try{let body={channels:{telegram:{enabled:notifyForm.tg,chatId:notifyForm.tgChat.trim()},wechatWork:{enabled:notifyForm.wx},serverchan:{enabled:notifyForm.sc}},rules:{}};if(notifyForm.tgToken.trim())body.channels.telegram.botToken=notifyForm.tgToken.trim();if(notifyForm.wxUrl.trim())body.channels.wechatWork.webhookUrl=notifyForm.wxUrl.trim();if(notifyForm.scKey.trim())body.channels.serverchan.sendKey=notifyForm.scKey.trim();await api('/api/notify/config',{method:'POST',body:JSON.stringify(body)});flash('通知配置已保存');loadNotify()}catch(e){flash(e.message)}}
+  async function testNotify(){try{await api('/api/notify/test',{method:'POST'});flash('测试通知已发送/已尝试');loadNotify()}catch(e){flash(e.message)}}
+  async function loadTrend(){try{let h=await api('/api/history?hours=168');setTrend(h.history||{})}catch(e){setTrend({error:e.message})}}
+  async function loadDiagnose(){try{let d=await api('/api/tun/diagnose');setDiag(d)}catch(e){setDiag({error:e.message})}try{let b=await api('/api/tun/backup');setTunBak((b.instructions||[]).join('\n'))}catch(e){setTunBak(e.message)}}
+  async function downloadDiag(){try{let r=await fetch('/api/tun/diagnostic-package',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error('HTTP '+r.status);let blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='xray-proxy-native-diagnostic-1.21.0.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);flash('诊断包已生成')}catch(e){flash(e.message)}}
+  async function loadLogs(){try{let d=await api('/api/logs');let text=Array.isArray(d.logs)?d.logs.join('\n'):(d.content||d.logs||'');setLogs(text||'暂无日志')}catch(e){setLogs('日志读取失败：'+e.message)}}
+  function exportBak(){let qs=bakPwd?('?password='+encodeURIComponent(bakPwd)+'&compress=true'):'';location.href='/api/backup/export'+qs}
+  async function importBak(){try{if(!bakFile)throw Error('请选择备份文件');let text=await bakFile.text();await api('/api/backup/import',{method:'POST',body:JSON.stringify({data:text,password:bakPwd2||undefined})});flash('导入完成');refreshAll()}catch(e){flash(e.message)}}
+  async function resetCfg(){if(!confirm('恢复默认配置？'))return;try{await api('/api/backup/reset',{method:'POST'});flash('已恢复默认');refreshAll()}catch(e){flash(e.message)}}
+  const run=!!status.running, starting=!!status.starting; const tunEnabled=!!(tun.status?.enabled||tun.config?.enabled||tun.device?.exists); const total=traffic.total||{}; const down=total.down??traffic.downlink??traffic.down??0, up=total.up??traffic.uplink??traffic.up??0; const activeNode=sel||nodes[0];
+  if(!authed)return <Login setup={setup} pwd={pwd} setPwd={setPwd} login={login} err={loginErr} clear={()=>{localStorage.removeItem(tokenKey);localStorage.removeItem(refreshKey);setLoginErr('登录缓存已清除，请重新输入密码')}}/>;
+  return <div className="appShell"><aside className="side"><div className="brand"><div className="brandIcon"><Globe2 size={25}/></div><div><b>Xray 代理</b><span>网络代理管理</span></div></div><nav>{NAV.map(([id,t,Icon])=><button key={id} onClick={()=>setView(id)} className={view===id?'active':''}><Icon size={18}/><span>{t}</span></button>)}</nav><div className="sideCard"><b>运行端口</b><p><span>入口</span><strong>2088</strong></p><p><span>SOCKS</span><strong>10808</strong></p><p><span>HTTP</span><strong>10809</strong></p><p><span>TUN</span><strong>手动</strong></p></div></aside><main className="main"><header className="top"><div><h1>{navMeta[view].title}</h1><p>{navMeta[view].sub}</p></div><div className="topActions"><StatusPill state={run?'ok':(starting?'warn':'bad')}>{starting?'启动中':(run?'运行中':'已停止')}</StatusPill><Button kind="green" size="sm" icon={Play} onClick={()=>runAction('start')}>启动</Button><Button kind="red" size="sm" icon={Square} onClick={()=>runAction('stop')}>停止</Button><Button size="sm" icon={RefreshCw} onClick={()=>runAction('restart')}>重启</Button></div></header><div className="mobileNav">{NAV.map(([id,t])=><button key={id} onClick={()=>setView(id)} className={view===id?'active':''}>{t}</button>)}</div><section className="page">{view==='dash'&&<Dashboard {...{run,starting,nodes,allNodes,tunEnabled,down,up,activeNode,logs,status,refreshAll,setView,busy}}/>}{view==='nodes'&&<Nodes {...{nodes,allNodes,sel,setSel,openNode,toggleNode,delNode,testNode,testAll,setImportModal}}/>}{view==='network'&&<NetworkPage {...{tun,tunEnabled,tunForm,setTunForm,saveTun,tunAct}}/>}{view==='traffic'&&<TrafficPage {...{traffic,history,down,up}}/>}{view==='enhance'&&<EnhancePage {...{auto,autoForm,setAutoForm,saveAuto,autoNow,notifyForm,setNotifyForm,saveNotify,testNotify,notifyLog,trend}}/>}{view==='diagnose'&&<DiagnosePage {...{diag,tunBak,downloadDiag}}/>}{view==='logs'&&<LogsPage logs={logs} loadLogs={loadLogs}/>} {view==='backup'&&<BackupPage {...{bakPwd,setBakPwd,exportBak,bakPwd2,setBakPwd2,setBakFile,importBak,resetCfg}}/>}{view==='settings'&&<SettingsPage logout={logout} refreshAll={refreshAll}/>}</section><footer><span>{foot}</span><span>v1.23.0</span></footer></main>{toast&&<div className="toast">{toast}</div>}{nodeModal&&<NodeModal {...{nodeForm,setNodeForm,saveNode,close:()=>setNodeModal(false),editing:!!sel}}/>}{importModal&&<ImportModal {...{importText,setImportText,importPreview,previewImport,importLinks,importTest,setImportTest,close:()=>setImportModal(false)}}/>}</div>
 }
+function Aurora(){return <div className="aurora"><span/><span/><span/></div>}
+function Login({setup,pwd,setPwd,login,err,clear}){return <div className="loginScreen"><div className="loginPanel"><div className="loginIcon"><ShieldCheck size={34}/></div><h1>Xray 代理</h1><p>{setup?'首次使用：设置一个管理密码':'请输入管理密码进入控制台'}</p><input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')login()}} placeholder="管理密码" autoFocus/><Button kind="primary" icon={Lock} onClick={login}>进入控制台</Button>{err&&<div className="errorText">{err}</div>}<button className="ghostLink" onClick={clear}>清除登录缓存</button></div></div>}
+function Dashboard({run,starting,nodes,allNodes,tunEnabled,down,up,activeNode,logs,refreshAll,setView,busy}){
+  const posture=run&&nodes.length?(tunEnabled?'全局增强':'安全代理'):'待配置';
+  const readiness=(run?34:0)+(nodes.length?33:0)+(tunEnabled?18:10)+15;
+  const recent=(logs||'暂无日志').split('\n').slice(-8).join('\n');
+  return <div className="dashGrid proDash"><section className="hero proHero"><div><div className="eyebrow">Xray 代理控制台</div><h2>{run?'代理服务运行中':starting?'代理服务启动中':'代理服务未启动'}</h2><p>{activeNode?`当前链路：${activeNode.tag} · ${proto(activeNode)} · ${addr(activeNode)}:${port(activeNode)}`:'当前链路：未配置节点'}</p><div className="heroBtns"><Button kind="primary" icon={Network} onClick={()=>setView('nodes')}>管理节点</Button><Button icon={Wifi} onClick={()=>setView('network')}>网络模式</Button><Button icon={RefreshCw} onClick={refreshAll}>{busy?'刷新中':'刷新'}</Button></div></div></section><div className="commandDeck"><MiniCommand title="服务状态" value={starting?'启动中':run?'在线':'离线'} tone={run?'green':'red'} icon={run?Play:Square}/><MiniCommand title="节点资产" value={`${nodes.length}/${allNodes.length}`} tone="blue" icon={Boxes}/><MiniCommand title="安全姿态" value={posture} tone={tunEnabled?'amber':'green'} icon={ShieldCheck}/><MiniCommand title="吞吐合计" value={fmtBytes(down+up)} tone="violet" icon={Activity}/></div><Card title="链路拓扑" sub="从用户入口到节点出口的实时视图" icon={Network} className="topologyCard"><Topology run={run} tunEnabled={tunEnabled} node={activeNode}/></Card><Card title="控制面板" sub="高频动作和安全建议" icon={Rocket} className="controlCard"><div className="readiness"><div><b>{Math.min(100,readiness)}%</b><span>就绪度</span></div><i style={{'--p':Math.min(100,readiness)+'%'}}/></div><div className="actionMatrix"><button onClick={()=>setView('nodes')}><Network size={17}/><b>节点资产</b><span>导入 / 测速 / 切换</span></button><button onClick={()=>setView('network')}><Wifi size={17}/><b>网络模式</b><span>SOCKS/HTTP/TUN</span></button><button onClick={()=>setView('diagnose')}><LifeBuoy size={17}/><b>安全诊断</b><span>TUN / 日志 / 回滚</span></button></div></Card><div className="insights proInsights"><Info tone="green" title="安全默认" text="SOCKS/HTTP 优先，不自动接管路由"/><Info tone="blue" title="本地控制" text="所有管理操作在 fnOS 本机完成"/><Info tone="amber" title="TUN 手动" text="高级透明代理必须手动确认"/></div><div className="metrics"><Metric title="运行状态" value={starting?'启动中':run?'运行中':'停止'} tone={run?'green':'red'}/><Metric title="可用节点" value={nodes.length} sub={`出站 ${allNodes.length}`}/><Metric title="TUN 模式" value={tunEnabled?'启用':'手动'} tone={tunEnabled?'green':'amber'}/><Metric title="下行 / 上行" value={`${fmtBytes(down)} / ${fmtBytes(up)}`} tone="blue"/></div><Card title="最近日志" sub="运行态摘要" icon={TerminalSquare} className="darkCard logPreview"><pre>{recent}</pre></Card></div>}
+function MiniCommand({title,value,tone,icon:Icon}){return <div className={'miniCommand '+tone}><span><Icon size={17}/>{title}</span><b>{value}</b></div>}
+function Topology({run,tunEnabled,node}){return <div className="topology"><div className="topNode"><Globe2 size={20}/><b>应用入口</b><span>2088</span></div><ChevronRight/><div className="topNode"><ShieldCheck size={20}/><b>{tunEnabled?'TUN + HTTP/SOCKS':'HTTP/SOCKS'}</b><span>{tunEnabled?'透明代理启用':'默认安全模式'}</span></div><ChevronRight/><div className="topNode"><Server size={20}/><b>{node?.tag||'未选择节点'}</b><span>{node?`${proto(node)} · ${addr(node)}:${port(node)}`:'导入节点后激活'}</span></div><ChevronRight/><div className={'topNode '+(run?'online':'offline')}><Rocket size={20}/><b>{run?'出口在线':'出口离线'}</b><span>{run?'链路可用':'等待启动'}</span></div></div>}
+function Info({title,text,tone}){return <div className={'info '+tone}><b>{title}</b><span>{text}</span></div>}
+function Metric({title,value,sub,tone=''}){return <div className={'metric '+tone}><span>{title}</span><strong>{value}</strong>{sub&&<em>{sub}</em>}</div>}
+function Nodes({nodes,allNodes,sel,setSel,openNode,toggleNode,delNode,testNode,testAll,setImportModal}){
+  const enabled=nodes.filter(n=>n.enabled!==false).length;
+  const disabled=nodes.length-enabled;
+  const protocols=[...new Set(nodes.map(n=>proto(n)).filter(Boolean))].slice(0,4);
+  return <div className="nodesPage"><div className="sectionHero"><div><span>节点资产</span><h2>节点资产中心</h2><p>统一管理订阅、手动节点、测速、启停和原始配置。</p></div><div className="row"><Button icon={Zap} onClick={testAll}>批量测速</Button><Button icon={Upload} onClick={()=>setImportModal(true)}>导入订阅</Button><Button kind="primary" onClick={()=>openNode(null)}>新增节点</Button></div></div><div className="commandDeck pageDeck"><MiniCommand title="可管理" value={nodes.length} tone="blue" icon={Boxes}/><MiniCommand title="已启用" value={enabled} tone="green" icon={CheckCircle2}/><MiniCommand title="已停用" value={disabled} tone="amber" icon={Square}/><MiniCommand title="协议" value={protocols.join(' / ')||'-'} tone="violet" icon={Network}/></div><div className="twoCol wideLeft"><Card title="节点列表" sub={`出站 ${allNodes.length} / 可管理 ${nodes.length}`} icon={Boxes}>{nodes.length? <div className="nodeList premiumNodeList">{nodes.map(n=><button key={n.tag} className={'nodeCard premiumNode '+(sel?.tag===n.tag?'active':'')} onClick={()=>setSel(n)}><div className="nodeAvatar">{(proto(n)||'?').slice(0,2).toUpperCase()}</div><div><b>{n.tag}</b><span>{proto(n)} · {addr(n)}:{port(n)}</span><em>{n.streamSettings?.network||'tcp'} / {n.streamSettings?.security||'none'}</em></div><StatusPill state={n.enabled===false?'bad':'ok'}>{n.enabled===false?'停用':'启用'}</StatusPill></button>)}</div>:<Empty title="还没有节点" sub="导入订阅或手动新增节点。"/>}</Card><Card title="节点详情" sub="配置、状态和操作" icon={Server} className="nodeDetailCard">{sel?<div className="detail"><div className="detailHero premiumDetail"><div className="nodeAvatar big">{proto(sel).slice(0,2).toUpperCase()}</div><div><h3>{sel.tag}</h3><p>{proto(sel)} · {addr(sel)}:{port(sel)}</p></div><StatusPill state={sel.enabled===false?'bad':'ok'}>{sel.enabled===false?'停用':'可用'}</StatusPill></div><div className="kv kvPro"><span>协议</span><b>{proto(sel)}</b><span>网络</span><b>{sel.streamSettings?.network||'-'}</b><span>安全</span><b>{sel.streamSettings?.security||'none'}</b><span>地址</span><b>{addr(sel)}:{port(sel)}</b><span>启用</span><b>{sel.enabled===false?'否':'是'}</b></div><div className="row wrap"><Button icon={Zap} onClick={()=>testNode(sel.tag)}>测速</Button><Button icon={Save} onClick={()=>openNode(sel)}>编辑</Button><Button icon={sel.enabled===false?CheckCircle2:Square} onClick={()=>toggleNode(sel.tag,sel.enabled===false)}>{sel.enabled===false?'启用':'停用'}</Button><Button kind="red" icon={Trash2} onClick={()=>delNode(sel.tag)}>删除</Button></div><pre className="code configCode">{JSON.stringify(sel,null,2)}</pre></div>:<Empty title="选择节点" sub="点击左侧节点查看详情。"/>}</Card></div></div>}
+function NetworkPage({tun,tunEnabled,tunForm,setTunForm,saveTun,tunAct}){return <div className="networkPage"><div className="sectionHero safetyHero"><div><span>网络模式</span><h2>网络模式与安全边界</h2><p>默认使用 SOCKS/HTTP；TUN 属于高级透明代理，所有启用动作必须手动确认。</p></div><StatusPill state={tunEnabled?'ok':'warn'}>{tunEnabled?'TUN 已启用':'TUN 手动模式'}</StatusPill></div><div className="networkGrid"><Card title="推荐代理模式" sub="默认安全，不接管路由" icon={ShieldCheck} className="accentGreen"><div className="modeTiles premiumModes"><div><b>SOCKS</b><strong>10808</strong><span>浏览器 / 客户端代理</span></div><div><b>HTTP</b><strong>10809</strong><span>下载器 / 系统代理</span></div></div><div className="safeNote"><CheckCircle2 size={18}/>适合日常使用；不会自动修改系统路由。</div></Card><Card title="TUN 高级模式" sub="透明代理，需要手动确认" icon={Wifi} className="accentAmber" action={<StatusPill state={tunEnabled?'ok':'warn'}>{tunEnabled?'已启用':'未启用'}</StatusPill>}><div className="formGrid"><Field label="设备名"><input value={tunForm.name} onChange={e=>setTunForm({...tunForm,name:e.target.value})}/></Field><Field label="MTU"><input type="number" value={tunForm.MTU} onChange={e=>setTunForm({...tunForm,MTU:e.target.value})}/></Field><Field label="网关"><input value={tunForm.gateway} onChange={e=>setTunForm({...tunForm,gateway:e.target.value})}/></Field><Field label="DNS"><input value={tunForm.DNS} onChange={e=>setTunForm({...tunForm,DNS:e.target.value})}/></Field><Field label="出口网卡"><input value={tunForm.autoOutboundsInterface} onChange={e=>setTunForm({...tunForm,autoOutboundsInterface:e.target.value})}/></Field><Field label="自动恢复"><select value={tunForm.autoStart} onChange={e=>setTunForm({...tunForm,autoStart:e.target.value})}><option value="false">关闭</option><option value="true">开启</option></select></Field></div><div className="row wrap"><Button kind="primary" icon={Save} onClick={saveTun}>保存 TUN</Button><Button kind="green" icon={Play} onClick={()=>tunAct('start')}>启用</Button><Button kind="red" icon={Square} onClick={()=>tunAct('stop')}>停止</Button><Button icon={Trash2} onClick={()=>tunAct('cleanup')}>清理残留</Button></div><div className="kv kvPro"><span>配置启用</span><b>{tun.config?.enabled?'是':'否'}</b><span>自动恢复</span><b>{tun.config?.autoStart?'开启':'关闭'}</b><span>设备</span><b>{tun.config?.name||'tun0'} · {tun.device?.exists?'存在':'未检测'}</b><span>xray</span><b>{tun.xray?.running?'运行中':'未运行'}</b></div></Card></div></div>}
+function TrafficPage({traffic,history,down,up}){let inbound=traffic.inbound||{}, sorted=traffic.traffic_sorted||[];let max=Math.max(1,...history.map(x=>(x.down||0)+(x.up||0)));return <div className="trafficGrid trafficPage"><div className="sectionHero trafficHero"><div><span>流量观测</span><h2>流量观测台</h2><p>聚合入站、节点排行和历史趋势，快速判断代理链路负载。</p></div><strong>{fmtBytes(down+up)}</strong></div><div className="metrics"><Metric title="总下行" value={fmtBytes(down)} tone="blue"/><Metric title="总上行" value={fmtBytes(up)} tone="green"/><Metric title="入站数量" value={Object.keys(inbound).length}/><Metric title="节点流量" value={sorted.length}/></div><Card title="历史趋势" sub="最近采样" icon={Activity} className="wide"><div className="chartFrame">{history.length?<div className="bars premiumBars">{history.slice(-48).map((x,i)=><i key={i} style={{height:Math.max(8,((x.down||0)+(x.up||0))/max*100)+'%'}} title={fmtBytes((x.down||0)+(x.up||0))}/>)}</div>:<Empty title="暂无历史" sub="服务运行后会生成流量历史。"/>}</div></Card><Card title="入站统计" icon={Wifi}>{Object.keys(inbound).length?<table className="proTable"><tbody>{Object.entries(inbound).map(([k,v])=><tr key={k}><td>{k}</td><td>{fmtBytes(v.down||0)}</td><td>{fmtBytes(v.up||0)}</td></tr>)}</tbody></table>:<Empty/>}</Card><Card title="节点流量排行" icon={Network}>{sorted.length?<table className="proTable"><tbody>{sorted.map(x=><tr key={x.tag}><td>{x.tag}</td><td>{fmtBytes(x.down)}</td><td>{fmtBytes(x.up)}</td></tr>)}</tbody></table>:<Empty/>}</Card></div>}
+function EnhancePage({auto,autoForm,setAutoForm,saveAuto,autoNow,notifyForm,setNotifyForm,saveNotify,testNotify,notifyLog,trend}){let rows=Object.keys(trend||{}).filter(k=>k!=='error');return <div className="enhanceGrid enhancePage"><div className="sectionHero enhanceHero"><div><span>增强能力</span><h2>增强能力中心</h2><p>自动选优、通知渠道和节点趋势集中管理，让代理链路具备自我调整能力。</p></div><StatusPill state={autoForm.enabled?'ok':'warn'}>{autoForm.enabled?'自动选优开启':'自动选优关闭'}</StatusPill></div><Card title="自动选优" sub={`当前 ${auto.current||'-'} · 最优 ${auto.optimal||'-'}`} icon={Rocket}><div className="formGrid"><Field label="启用"><input type="checkbox" checked={autoForm.enabled} onChange={e=>setAutoForm({...autoForm,enabled:e.target.checked})}/></Field><Field label="稳定次数"><input type="number" value={autoForm.stableCount} onChange={e=>setAutoForm({...autoForm,stableCount:e.target.value})}/></Field><Field label="间隔秒"><input type="number" value={autoForm.minInterval} onChange={e=>setAutoForm({...autoForm,minInterval:e.target.value})}/></Field><Field label="平均窗口"><input type="number" value={autoForm.avgWindow} onChange={e=>setAutoForm({...autoForm,avgWindow:e.target.value})}/></Field><Field label="最大延迟"><input type="number" value={autoForm.maxLatency} onChange={e=>setAutoForm({...autoForm,maxLatency:e.target.value})}/></Field></div><div className="row"><Button kind="primary" icon={Save} onClick={saveAuto}>保存</Button><Button icon={Zap} onClick={autoNow}>立即选优</Button></div></Card><Card title="通知中心" sub="密钥留空表示不修改" icon={Bell}><div className="formGrid"><Field label="Telegram"><input type="checkbox" checked={notifyForm.tg} onChange={e=>setNotifyForm({...notifyForm,tg:e.target.checked})}/></Field><Field label="Chat ID"><input value={notifyForm.tgChat} onChange={e=>setNotifyForm({...notifyForm,tgChat:e.target.value})}/></Field><Field label="Bot Token"><input value={notifyForm.tgToken} onChange={e=>setNotifyForm({...notifyForm,tgToken:e.target.value})} placeholder="留空不修改"/></Field><Field label="企业微信"><input type="checkbox" checked={notifyForm.wx} onChange={e=>setNotifyForm({...notifyForm,wx:e.target.checked})}/></Field><Field label="Webhook"><input value={notifyForm.wxUrl} onChange={e=>setNotifyForm({...notifyForm,wxUrl:e.target.value})} placeholder="留空不修改"/></Field><Field label="Server酱"><input type="checkbox" checked={notifyForm.sc} onChange={e=>setNotifyForm({...notifyForm,sc:e.target.checked})}/></Field><Field label="SendKey"><input value={notifyForm.scKey} onChange={e=>setNotifyForm({...notifyForm,scKey:e.target.value})} placeholder="留空不修改"/></Field></div><div className="row"><Button kind="primary" icon={Save} onClick={saveNotify}>保存通知</Button><Button icon={Bell} onClick={testNotify}>测试通知</Button></div></Card><Card title="节点趋势" icon={Activity}>{rows.length?<table className="proTable"><tbody>{rows.slice(0,12).map(k=><tr key={k}><td>{k}</td><td>{Array.isArray(trend[k])?trend[k].length:'-' } 次记录</td></tr>)}</tbody></table>:<Empty title="暂无趋势"/>}</Card><Card title="通知日志" icon={TerminalSquare} className="darkCard"><pre>{notifyLog.length?notifyLog.slice(-12).map(x=>typeof x==='string'?x:JSON.stringify(x)).join('\n'):'暂无通知日志'}</pre></Card></div>}
+function DiagnosePage({diag,tunBak,downloadDiag}){let steps=diag?.checks||diag?.steps||[];return <div className="diagnosePage twoCol"><div className="sectionHero diagnoseHero"><div><span>安全诊断</span><h2>安全诊断中心</h2><p>面向 TUN、路由、日志和回滚的诊断入口，避免高级模式导致网络不可用。</p></div><Button icon={Download} onClick={downloadDiag}>下载诊断包</Button></div><Card title="安全向导" sub="TUN 使用前建议确认" icon={LifeBuoy}>{['先使用 SOCKS/HTTP 验证节点可用','开启 TUN 前确认已有可用节点','如网络异常，先停止 TUN 再清理残留','必要时下载诊断包发送给维护者'].map((x,i)=><div className="check" key={x}><span>{i+1}</span>{x}</div>)}</Card><Card title="诊断结果" icon={TerminalSquare}>{diag?.error?<div className="errorText">{diag.error}</div>:steps.length?<div>{steps.map((s,i)=><div className="check" key={i}><span>{s.ok?'✓':'!'}</span>{s.name||s.title||JSON.stringify(s)}</div>)}</div>:<pre className="code">{JSON.stringify(diag||{},null,2)}</pre>}</Card><Card title="回滚提示" icon={ShieldCheck} className="wide"><pre className="code">{tunBak||'暂无回滚提示'}</pre></Card></div>}
+function LogsPage({logs,loadLogs}){const lines=(logs||'暂无日志').split('\n');return <div className="logsPage"><div className="sectionHero logHero"><div><span>日志中心</span><h2>日志中心</h2><p>查看运行状态、错误和诊断线索。</p></div><Button icon={RefreshCw} onClick={loadLogs}>刷新日志</Button></div><Card title="实时日志" sub={`${lines.length} 行`} icon={TerminalSquare} className="darkCard full logConsole"><pre>{lines.map((line,i)=><span key={i} className={/error|fail|失败|错误/i.test(line)?'err':/warn|警告/i.test(line)?'warn':''}>{line}\n</span>)}</pre></Card></div>}
+function BackupPage({bakPwd,setBakPwd,exportBak,bakPwd2,setBakPwd2,setBakFile,importBak,resetCfg}){return <div className="backupPage twoCol"><div className="sectionHero backupHero"><div><span>备份保险库</span><h2>备份保险库</h2><p>导出、加密、恢复和重置配置，避免节点资产和代理配置丢失。</p></div><ShieldCheck size={42}/></div><Card title="导出备份" sub="可选加密密码" icon={Download}><Field label="加密密码"><input type="password" value={bakPwd} onChange={e=>setBakPwd(e.target.value)} placeholder="留空则明文导出"/></Field><Button kind="primary" icon={Download} onClick={exportBak}>导出配置</Button></Card><Card title="导入备份" sub="恢复前请确认来源可信" icon={Upload}><Field label="备份文件"><input type="file" onChange={e=>setBakFile(e.target.files?.[0]||null)}/></Field><Field label="解密密码"><input type="password" value={bakPwd2} onChange={e=>setBakPwd2(e.target.value)} placeholder="加密备份必填"/></Field><div className="row"><Button kind="primary" icon={Upload} onClick={importBak}>导入</Button><Button kind="red" icon={Trash2} onClick={resetCfg}>恢复默认</Button></div></Card></div>}
+function SettingsPage({logout,refreshAll}){return <div className="settingsPage twoCol"><div className="sectionHero settingsHero"><div><span>应用设置</span><h2>应用设置</h2><p>查看版本、前端资源、资源路径和会话操作。</p></div><Settings size={42}/></div><Card title="应用信息" icon={Settings}><div className="kv kvPro"><span>版本</span><b>v1.23.0</b><span>前端</span><b>静态前端</b><span>资源路径</span><b>相对路径 ./assets</b><span>服务端口</span><b>2088</b></div></Card><Card title="会话" icon={Lock}><div className="row"><Button icon={RefreshCw} onClick={refreshAll}>刷新全部</Button><Button kind="red" icon={Lock} onClick={logout}>退出登录</Button></div></Card></div>}
+function NodeModal({nodeForm,setNodeForm,saveNode,close,editing}){return <div className="modal"><div className="modalBox"><header><h2>{editing?'编辑节点':'新增节点'}</h2><button onClick={close}>×</button></header><div className="formGrid"><Field label="Tag"><input value={nodeForm.tag} onChange={e=>setNodeForm({...nodeForm,tag:e.target.value})}/></Field><Field label="协议"><select value={nodeForm.protocol} onChange={e=>setNodeForm({...nodeForm,protocol:e.target.value})}><option>vless</option><option>vmess</option><option>trojan</option><option>shadowsocks</option></select></Field><Field label="地址"><input value={nodeForm.address} onChange={e=>setNodeForm({...nodeForm,address:e.target.value})}/></Field><Field label="端口"><input value={nodeForm.port} onChange={e=>setNodeForm({...nodeForm,port:e.target.value})}/></Field><Field label="ID/密码" wide><input value={nodeForm.id} onChange={e=>setNodeForm({...nodeForm,id:e.target.value})}/></Field><Field label="网络"><select value={nodeForm.network} onChange={e=>setNodeForm({...nodeForm,network:e.target.value})}><option>tcp</option><option>ws</option><option>grpc</option><option>http</option></select></Field><Field label="安全"><select value={nodeForm.security} onChange={e=>setNodeForm({...nodeForm,security:e.target.value})}><option>none</option><option>tls</option><option>reality</option></select></Field><Field label="高级 JSON" wide><textarea value={nodeForm.extra} onChange={e=>setNodeForm({...nodeForm,extra:e.target.value})} placeholder='{"streamSettings":{...}}'/></Field></div><footer><Button onClick={close}>取消</Button><Button kind="primary" icon={Save} onClick={saveNode}>保存</Button></footer></div></div>}
+function ImportModal({importText,setImportText,importPreview,previewImport,importLinks,importTest,setImportTest,close}){return <div className="modal"><div className="modalBox large"><header><h2>导入节点 / 订阅</h2><button onClick={close}>×</button></header><textarea className="bigText" value={importText} onChange={e=>setImportText(e.target.value)} placeholder="粘贴 vmess/vless/trojan/ss 链接或订阅 URL，支持多行"/><label className="switch"><input type="checkbox" checked={importTest} onChange={e=>setImportTest(e.target.checked)}/> 导入后测速</label>{importPreview&&<pre className="code">{JSON.stringify(importPreview,null,2)}</pre>}<footer><Button onClick={previewImport}>预览</Button><Button kind="primary" icon={Upload} onClick={importLinks}>导入</Button></footer></div></div>}
 
-// 骨架屏组件
-const Skeleton = ({ w = '100%', h = '16px', r = '8px' }) => (
-  <div className="skeleton" style={{ width: w, height: h, borderRadius: r }} />
-)
-
-// 迷你图表组件
-const MiniSparkline = ({ data = [], color = '#2f6bff', height = 40 }) => {
-  const max = Math.max(...data, 1)
-  const points = data.map((v, i) => `${(i / Math.max(data.length - 1, 1)) * 100},${100 - (v / max) * 100}`).join(' ')
-  return (
-    <svg width="100%" height={height} viewBox="0 0 100 100" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={`0,100 ${points} 100,100`} fill="url(#grad)" />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" />
-    </svg>
-  )
-}
-
-// 快捷操作按钮组件
-const QuickAction = ({ icon, label, onClick, color, variant = 'default' }) => (
-  <button className={`quickAction ${variant}`} onClick={onClick} style={{ '--accent': color }}>
-    <span className="quickIcon">{icon}</span>
-    <span className="quickLabel">{label}</span>
-  </button>
-)
-
-// 节点卡片组件（增强版）
-const NodeCardEnhanced = ({ node, isActive, onActivate, onEdit, onDelete }) => {
-  const [isHovered, setIsHovered] = useState(false)
-  const statusColors = { alive: '#10b981', dead: '#ef4444', unknown: '#94a3b8' }
-  const statusLabels = { alive: '在线', dead: '离线', unknown: '未知' }
-
-  return (
-    <div 
-      className={`card nodeCard ${isActive ? 'active' : ''}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <div className="nodeCardHead">
-        <div className="nodeCardIcon" style={{ background: isActive ? 'linear-gradient(135deg, #2f6bff, #22c7ee)' : '#f1f5f9' }}>
-          <span>{node.protocol?.toUpperCase()?.slice(0, 3) || '✈'}</span>
-        </div>
-        <div className="nodeCardInfo">
-          <b className="nodeCardName">{node.remark || '未命名节点'}</b>
-          <span className="nodeCardAddr">{node.addr}:{node.port}</span>
-        </div>
-        {isHovered && (
-          <div className="nodeCardActions">
-            <button className="btn ghost sm" onClick={onEdit}>编辑</button>
-            <button className="btn ghost sm danger" onClick={onDelete}>删除</button>
-          </div>
-        )}
-        {!isHovered && (
-          <span className="nodeBadge" style={{ background: statusColors[node.health || 'unknown'] }}>
-            {statusLabels[node.health || 'unknown']}
-          </span>
-        )}
-      </div>
-      <div className="nodeCardMeta">
-        <span>延迟: {node.ping || '--'} ms</span>
-        <span>下载: {node.down || '--'}</span>
-        <span>上传: {node.up || '--'}</span>
-      </div>
-      {isHovered && !isActive && (
-        <button className="btn primary full mt" onClick={onActivate}>
-          设为当前节点
-        </button>
-      )}
-      {isActive && (
-        <div className="activeBadge">✓ 当前使用中</div>
-      )}
-    </div>
-  )
-}
-
-// 统计卡片组件
-const StatCard = ({ label, value, unit, trend, color, icon }) => (
-  <div className="card statCard" style={{ borderTop: `3px solid ${color}` }}>
-    <div className="statHead">
-      <span className="statIcon">{icon}</span>
-      <span className="statLabel">{label}</span>
-    </div>
-    <div className="statValue">
-      <b>{value}</b>
-      <span>{unit}</span>
-    </div>
-    {trend && <MiniSparkline data={trend} color={color} />}
-  </div>
-)
-
-// 健康指示器组件
-const HealthItem = ({ label, value, ok }) => (
-  <div className="healthItem">
-    <span className="healthStatus" style={{ color: ok ? '#10b981' : '#ef4444' }}>{ok ? '✓' : '✗'}</span>
-    <span className="healthLabel">{label}</span>
-    <span className="healthValue">{value}</span>
-  </div>
-)
-
-// 主应用
-function App() {
-  const [page, setPage] = useState('dash')
-  const [isLoading, setIsLoading] = useState(true)
-  const [toasts, setToasts] = useState([])
-  const [nodes, setNodes] = useState([])
-  const [activeNode, setActiveNode] = useState(null)
-  const [xrayRunning, setXrayRunning] = useState(true)
-  const [traffic, setTraffic] = useState({ up: 0, down: 0, conn: 0 })
-  const [trafficHistory, setTrafficHistory] = useState(
-    Array(20).fill(0).map(() => Math.floor(Math.random() * 100))
-  )
-
-  // Toast 辅助函数
-  const showToast = useCallback((msg, type = 'info') => {
-    const id = Date.now()
-    setToasts(p => [...p, { id, msg, type }])
-  }, [])
-
-  const removeToast = useCallback(id => {
-    setToasts(p => p.filter(t => t.id !== id))
-  }, [])
-
-  // 模拟加载
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setIsLoading(false)
-      setNodes([
-        { id: 1, remark: '香港-国际带宽', addr: 'hk1.example.com', port: 443, protocol: 'vmess', health: 'alive', ping: 45, down: '245 MB', up: '32 MB' },
-        { id: 2, remark: '日本-东京节点', addr: 'jp1.example.com', port: 443, protocol: 'vmess', health: 'alive', ping: 78, down: '189 MB', up: '28 MB' },
-        { id: 3, remark: '新加坡-AWS', addr: 'sg1.example.com', port: 2083, protocol: 'vless', health: 'dead', ping: 999, down: '0', up: '0' },
-        { id: 4, remark: '美国-洛杉矶', addr: 'us1.example.com', port: 8443, protocol: 'trojan', health: 'alive', ping: 156, down: '512 MB', up: '89 MB' },
-      ])
-      setActiveNode(1)
-    }, 800)
-    return () => clearTimeout(t)
-  }, [])
-
-  // 模拟流量更新
-  useEffect(() => {
-    const t = setInterval(() => {
-      setTraffic(p => ({
-        up: p.up + Math.floor(Math.random() * 500),
-        down: p.down + Math.floor(Math.random() * 2000),
-        conn: 5 + Math.floor(Math.random() * 15),
-      }))
-      setTrafficHistory(p => {
-        const n = [...p.slice(1), Math.floor(Math.random() * 100)]
-        return n
-      })
-    }, 1000)
-    return () => clearInterval(t)
-  }, [])
-
-  // 快捷操作
-  const handleStartProxy = useCallback(() => {
-    setXrayRunning(true)
-    showToast('代理已启动', 'success')
-  }, [showToast])
-
-  const handleStopProxy = useCallback(() => {
-    setXrayRunning(false)
-    showToast('代理已停止', 'info')
-  }, [showToast])
-
-  const handleRestartXray = useCallback(() => {
-    showToast('正在重启 Xray...', 'info')
-    setTimeout(() => {
-      setXrayRunning(true)
-      showToast('Xray 重启成功', 'success')
-    }, 1500)
-  }, [showToast])
-
-  const handleActivateNode = useCallback(nodeId => {
-    setActiveNode(nodeId)
-    showToast(`已切换到节点 #${nodeId}`, 'success')
-  }, [showToast])
-
-  // 格式化字节
-  const formatBytes = b => {
-    if (b < 1024) return `${b} B`
-    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
-    if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`
-    return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`
-  }
-
-  // 页面内容
-  const PageContent = useMemo(() => {
-    if (isLoading) {
-      return (
-        <div className="page">
-          <div className="section">
-            <Skeleton w="280px" h="32px" />
-            <br /><br />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="card" style={{ padding: '20px' }}>
-                  <Skeleton w="120px" />
-                  <br />
-                  <Skeleton w="180px" h="36px" />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )
-    }
-
-    switch (page) {
-      case 'dash':
-        return (
-          <div className="page">
-            <div className="hero">
-              <div>
-                <h1>Command Center</h1>
-                <p>Xray 代理运行中 · v1.22.0</p>
-              </div>
-              <span className={`bigStatus ${xrayRunning ? 'up' : 'down'}`}>
-                {xrayRunning ? '运行中' : '已停止'}
-              </span>
-            </div>
-
-            <div className="section">
-              <h3>快捷操作</h3>
-              <div className="quickActions">
-                <QuickAction icon="▶" label="启动代理" onClick={handleStartProxy} color="#10b981" variant={xrayRunning ? 'active' : 'default'} />
-                <QuickAction icon="■" label="停止代理" onClick={handleStopProxy} color="#ef4444" />
-                <QuickAction icon="⟳" label="重启 Xray" onClick={handleRestartXray} color="#2f6bff" />
-                <QuickAction icon="↻" label="测速全部" onClick={() => showToast('正在测速所有节点...', 'info')} color="#f59e0b" />
-              </div>
-            </div>
-
-            <div className="section">
-              <div className="statGrid">
-                <StatCard label="下载流量" value={formatBytes(traffic.down).split(' ')[0]} unit={formatBytes(traffic.down).split(' ')[1]} trend={trafficHistory} color="#2f6bff" icon="↓" />
-                <StatCard label="上传流量" value={formatBytes(traffic.up).split(' ')[0]} unit={formatBytes(traffic.up).split(' ')[1]} trend={trafficHistory.map(x=>x*0.3)} color="#22c7ee" icon="↑" />
-                <StatCard label="活跃连接" value={traffic.conn} unit="个" color="#7c3aed" icon="⚡" />
-                <StatCard label="节点总数" value={nodes.length} unit="个" color="#10b981" icon="▢" />
-              </div>
-            </div>
-
-            <div className="section">
-              <h3>系统状态</h3>
-              <div className="card healthCard">
-                <HealthItem label="Xray 内核" value="v26.6.1" ok={xrayRunning} />
-                <HealthItem label="SOCKS 代理" value=":10808" ok={xrayRunning} />
-                <HealthItem label="HTTP 代理" value=":10809" ok={xrayRunning} />
-                <HealthItem label="管理面板" value=":2088" ok={true} />
-                <HealthItem label="TUN 模式" value="手动" ok={true} />
-                <HealthItem label="当前节点" value={nodes.find(n => n.id === activeNode)?.remark || '--'} ok={activeNode !== null} />
-              </div>
-            </div>
-
-            <div className="section">
-              <h3>当前节点</h3>
-              {nodes.filter(n => n.id === activeNode).map(node => (
-                <NodeCardEnhanced key={node.id} node={node} isActive={true} />
-              ))}
-            </div>
-          </div>
-        )
-
-      case 'nodes':
-        return (
-          <div className="page">
-            <div className="hero">
-              <div>
-                <h1>节点资产中心</h1>
-                <p>共 {nodes.length} 个节点 · {nodes.filter(n=>n.health==='alive').length} 个在线</p>
-              </div>
-              <button className="btn primary" onClick={() => showToast('导入功能开发中...', 'info')}>
-                + 导入节点
-              </button>
-            </div>
-
-            <div className="section">
-              <div className="nodeGrid">
-                {nodes.map(node => (
-                  <NodeCardEnhanced 
-                    key={node.id} 
-                    node={node} 
-                    isActive={node.id === activeNode}
-                    onActivate={() => handleActivateNode(node.id)}
-                    onEdit={() => showToast('编辑功能开发中...', 'info')}
-                    onDelete={() => showToast('删除功能开发中...', 'info')}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )
-
-      // 其他页面保持简洁，核心功能已在总览和节点
-      default:
-        return (
-          <div className="page">
-            <div className="hero">
-              <div>
-                <h1>{pages.find(p => p.id === page)?.label || page}</h1>
-                <p>v1.22.0 功能持续完善中</p>
-              </div>
-            </div>
-            <div className="section">
-              <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.3 }}>🚧</div>
-                <h3>功能开发中</h3>
-                <p style={{ color: '#64748b', marginTop: '8px' }}>该页面正在开发，敬请期待 v1.23.0 更新</p>
-              </div>
-            </div>
-          </div>
-        )
-    }
-  }, [page, isLoading, xrayRunning, traffic, trafficHistory, nodes, activeNode, handleStartProxy, handleStopProxy, handleRestartXray, handleActivateNode, showToast])
-
-  return (
-    <div className="app">
-      <div className="aurora">
-        <span /><span /><span />
-      </div>
-
-      <div className="appShell">
-        {/* 桌面端侧边栏 */}
-        <aside className="side desktop">
-          <div className="brand">
-            <div className="brandIcon">◉</div>
-            <div>
-              <b>Xray Proxy</b>
-              <span>v1.22.0</span>
-            </div>
-            <em>PRO</em>
-          </div>
-          <nav>
-            {pages.map(p => (
-              <button key={p.id} className={page === p.id ? 'active' : ''} onClick={() => setPage(p.id)}>
-                <span>{p.icon}</span>
-                {p.label}
-              </button>
-            ))}
-          </nav>
-          <div className="sideCard">
-            <div className="sideCardHead">系统状态</div>
-            <div className="sideCardBody">
-              <div className="sideStat"><b style={{ color: xrayRunning ? '#10b981' : '#ef4444' }}>{xrayRunning ? '●' : '○'}</b><span>Xray {xrayRunning ? '运行中' : '已停止'}</span></div>
-              <div className="sideStat"><b>▢</b><span>{nodes.length} 节点</span></div>
-              <div className="sideStat"><b>⚡</b><span>{traffic.conn} 连接</span></div>
-            </div>
-          </div>
-        </aside>
-
-        {/* 主内容区 */}
-        <main>
-          <div className="top">
-            <h2>{pages.find(p => p.id === page)?.label || '总览'}</h2>
-            <div className="topActions">
-              <button className="btn ghost" onClick={handleRestartXray}>⟳ 刷新</button>
-              <button className="btn primary" onClick={handleStartProxy}>▶ 启动</button>
-            </div>
-          </div>
-          {PageContent}
-        </main>
-      </div>
-
-      {/* 手机端底部导航 */}
-      <nav className="mobileNav">
-        {pages.map(p => (
-          <button key={p.id} className={page === p.id ? 'active' : ''} onClick={() => setPage(p.id)}>
-            {p.icon} {p.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* Toast 容器 */}
-      <div className="toastContainer">
-        {toasts.map(t => (
-          <Toast key={t.id} message={t.msg} type={t.type} onClose={() => removeToast(t.id)} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// 渲染应用
-const root = createRoot(document.getElementById('root'))
-root.render(<App />)
+createRoot(document.getElementById('root')).render(<App/>);

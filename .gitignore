@@ -1,0 +1,7 @@
+ui-src/node_modules/
+ui-src/dist/
+node_modules/
+*.bak
+*.tmp
+*.map
+/xray-ui-dist/
