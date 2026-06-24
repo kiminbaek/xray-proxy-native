@@ -322,3 +322,8 @@ html[data-theme="dark"] .quotaStatus .bar{background:#1c222b}
   .modalCard{padding:14px}
   .nodeMain b{white-space:normal}
 }
+
+/* v1.24.3 login mobile polish: keep fnOS native white/card style, fix vertical rhythm and button wrapping */
+.loginPanel{display:grid;justify-items:center;gap:12px}.loginPanel .loginIcon{margin-bottom:4px}.loginPanel h1{margin:4px 0 0;font-size:32px;line-height:1.15}.loginPanel p{margin:0;color:var(--muted);font-size:15px}.loginPanel input{margin-top:4px}.loginActions{width:100%;display:grid;justify-items:center;gap:10px;margin-top:2px}.loginActions .btn{margin-top:0;min-width:180px}.loginActions .ghostLink{font-size:14px;line-height:1.4}
+@media(max-width:760px){.loginScreen{min-height:calc(100vh - 96px);place-items:start center;padding:112px 18px 24px}.loginPanel{width:100%;max-width:430px;padding:30px 24px 28px;border-radius:8px}.loginPanel .loginIcon{width:48px;height:48px;border-radius:12px}.loginPanel h1{font-size:30px}.loginPanel p{font-size:15px}.loginPanel input{height:46px;font-size:15px}.loginActions .btn{width:100%;max-width:220px;min-height:44px}.loginActions .ghostLink{display:block;width:100%;padding:2px 0;text-align:center;white-space:normal}}
+@media(max-width:420px){.loginScreen{padding-top:96px}.loginPanel{padding:26px 18px 24px}.loginPanel h1{font-size:28px}.loginActions .btn{max-width:100%}}
