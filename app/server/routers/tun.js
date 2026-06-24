@@ -22,8 +22,29 @@ const { wrap } = require('./_utils');
 const { logToInfo } = require('../xray/utils');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const DATA_DIR = process.env.TRIM_PKGVAR || '/tmp/xray-proxy-native';
+
+// 获取本机可用物理网卡列表（用于 TUN autoOutboundsInterface 下拉选择）
+function getNetworkInterfaces() {
+  try {
+    const out = execSync('ip -o link show', { encoding: 'utf8', timeout: 5000 });
+    return out.split('\n').map(line => {
+      const m = line.match(/^\d+:\s+([^:@]+)/);
+      return m ? m[1].trim() : null;
+    }).filter(name => {
+      if (!name) return false;
+      // 过滤虚拟/回环设备
+      if (name === 'lo') return false;
+      if (/^(tun|tap|docker|veth|br-|virbr|vmnet|dummy|bond|team)/.test(name)) return false;
+      return true;
+    });
+  } catch (e) {
+    logToInfo('[tun] getNetworkInterfaces failed: ' + e.message);
+    return [];
+  }
+}
 
 // 检测 TUN 设备是否存在（不依赖 ip 命令，sandbox 也能查）
 // /sys/class/net/tun0 是符号链接，存在说明 tun 设备被创建
@@ -56,6 +77,11 @@ router.get('/config', wrap(async (req, res) => {
       backupConfig: path.join(DATA_DIR, 'network_backup.conf')
     }
   });
+}));
+
+// GET /api/tun/interfaces - 返可用网卡列表
+router.get('/interfaces', wrap(async (req, res) => {
+  res.json({ ok: true, interfaces: getNetworkInterfaces() });
 }));
 
 // POST /api/tun/config - 改 tun.json 配置
@@ -307,7 +333,7 @@ router.get('/diagnostic-package', wrap(async (req, res) => {
     .replace(/("password_hash"\s*:\s*")[^"]+/ig, '$1***')
     .replace(/("id"\s*:\s*")[0-9a-f-]{20,}/ig, '$1***');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="xray-proxy-native-diagnostic-1.20.0.json"');
+  res.setHeader('Content-Disposition', `attachment; filename="xray-proxy-native-diagnostic-${process.env.TRIM_APPVER || '1.23.3'}.json"`);
   res.send(raw);
 }));
 
@@ -335,6 +361,21 @@ router.get('/backup', wrap(async (req, res) => {
       '如不需要"全局代理"，推荐用 socks 模式（不修改系统路由）'
     ]
   });
+}));
+
+// POST /api/tun/restore - 执行 backup_network.sh 一键恢复网络
+router.post('/restore', wrap(async (req, res) => {
+  const shPath = path.join(DATA_DIR, 'backup_network.sh');
+  if (!fs.existsSync(shPath)) {
+    return res.status(404).json({ ok: false, error: '恢复脚本不存在，请先启用一次 TUN 模式生成备份' });
+  }
+  try {
+    const { execSync } = require('child_process');
+    execSync(`bash "${shPath}"`, { stdio: 'pipe', timeout: 30000 });
+    res.json({ ok: true, message: '网络恢复脚本已执行，请检查网络连通性' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: '恢复脚本执行失败: ' + e.message });
+  }
 }));
 
 // POST /api/tun/cleanup - 强制清理 TUN 残留（不依赖 xray 状态）
