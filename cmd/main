@@ -26,12 +26,12 @@ log_msg() {
 }
 
 # 同步 fnOS appcenter DB 状态（M99 死锁修复：install 钩子起的进程 fnOS 不认，需应用自己 sync）
-# 实测：桌面图标/打开入口要求 running 时必须 is_stop=true, is_uninstall=true
+# v1.24.1 修正：running 必须 is_stop=false、is_uninstall=false；否则桌面/打开入口状态可能异常
 sync_appcenter_status() {
     local app_status="${1:-running}"
-    local is_stop="true"
-    local is_uninstall="true"
-    [ "$app_status" = "running" ] || { is_stop="false"; is_uninstall="false"; }
+    local is_stop="false"
+    local is_uninstall="false"
+    [ "$app_status" = "running" ] || { is_stop="true"; is_uninstall="true"; }
     sudo -u postgres psql -d appcenter -c "UPDATE app SET status='${app_status}', is_stop=${is_stop}, is_uninstall=${is_uninstall}, updated_at=now() WHERE app_name='xray-proxy-native';" >/dev/null 2>&1 || true
 }
 

@@ -134,7 +134,8 @@ router.post('/:tag/test', wrap(async (req, res) => {
 
 // 重排序
 router.post('/reorder', wrap(async (req, res) => {
-  const { tags } = req.body;
+  // v1.24.1 兼容前端 v1.24.0 曾误传的 order 字段；新前端统一传 tags
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags : req.body?.order;
   if (!Array.isArray(tags)) return res.status(400).json({ ok: false, error: 'tags 必须为数组' });
   xray.reorderNodes(tags);
   res.json({ ok: true });

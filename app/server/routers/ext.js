@@ -1,4 +1,4 @@
-// v1.24.0 节点标签 / 订阅 / 配额 / 路由 / Geo 数据 / 一键复制 等扩展路由
+// v1.24.1 节点标签 / 订阅 / 配额 / 路由 / Geo 数据 / 一键复制 等扩展路由
 // 统一存储到 DATA_DIR 下独立 JSON 文件，避免动现有 schema
 const express = require('express');
 const fs = require('fs');
@@ -54,7 +54,14 @@ function genId() { return 's_' + Date.now().toString(36) + Math.random().toStrin
 
 router.get('/subscriptions', wrap(async (req, res) => {
   const data = readJSON(SUB_FILE, { items: [] });
-  res.json({ ok: true, items: data.items });
+  const now = Date.now();
+  const items = (data.items || []).map(it => {
+    const last = it.last_run ? Date.parse(it.last_run) : 0;
+    const intervalMs = (it.interval_hours || 24) * 3600 * 1000;
+    const nextTs = last ? last + intervalMs : now;
+    return { ...it, next_run: new Date(nextTs).toISOString(), due: !last || now >= nextTs };
+  });
+  res.json({ ok: true, items });
 }));
 router.post('/subscriptions', wrap(async (req, res) => {
   const { name, url, interval_hours } = req.body || {};
@@ -95,7 +102,7 @@ function fetchText(url, timeoutMs = 20000) {
     let u;
     try { u = new URL(url); } catch (_) { return reject(new Error('URL 错误')); }
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.0' } }, (resp) => {
+    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.1' } }, (resp) => {
       if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
         resp.resume();
         return resolve(fetchText(new URL(resp.headers.location, u).toString(), timeoutMs));
@@ -114,11 +121,8 @@ async function runSubscription(item) {
   item.last_run = new Date().toISOString();
   try {
     const text = await fetchText(item.url);
-    // 复用 nodes.js 的解析能力
-    const nodesRouter = require('./nodes');
-    // 调内部 API：复用 xray.parseNodeLink + add
+    // v1.24.1 调内部 API：复用 xray.parseShareLink + addNode
     const xrayMod = require('../xray');
-    const parsed = null; // 使用退化路径，xray.parseShareLink 解析单条
     let nodes = [];
     {
       const decoded = (function tryDecode(t){ try { if (/^[A-Za-z0-9+/=_\-\s]+$/.test(t)&&!t.includes('://')) { const n = t.replace(/\s+/g,'').replace(/-/g,'+').replace(/_/g,'/'); const d = Buffer.from(n,'base64').toString('utf8'); if (d.includes('://')) return d; } } catch(_){} return t; })(text);
@@ -127,51 +131,73 @@ async function runSubscription(item) {
         try { const n = xrayMod.parseShareLink(link); if (n) nodes.push(n); } catch (_) {}
       }
     }
-    const before = (xrayMod.getConfig().outbounds || []).length;
+    const cfg = xrayMod.getConfig();
+    const existing = new Set((cfg.outbounds || []).map(o => o.tag));
     let added = 0;
     for (const n of nodes) {
       try {
         if (!n || !n.tag) continue;
-        // 用订阅名加前缀避免冲突
-        const tagged = { ...n, tag: `${item.name}-${n.tag}` };
-        xrayMod.addNode(tagged);
+        // 用订阅名加前缀；已存在同名 tag 时跳过，避免自动更新无限重复添加
+        const safeName = String(item.name || 'subscription').replace(/[\r\n\t]/g, ' ').slice(0, 32) || 'subscription';
+        const tag = `${safeName}-${n.tag}`.slice(0, 64);
+        if (existing.has(tag)) continue;
+        xrayMod.addNode({ ...n, tag });
+        existing.add(tag);
         added++;
       } catch (_) {}
     }
     item.last_status = 'ok';
+    item.last_error = '';
     item.last_added = added;
     return { ok: true, added, total: nodes.length };
   } catch (e) {
-    item.last_status = 'error: ' + (e.message || e);
+    item.last_status = 'error';
+    item.last_error = e.message || String(e);
     item.last_added = 0;
     return { ok: false, error: e.message };
   }
 }
 
-// 后台 cron：每分钟扫描，到期就跑
+// v1.24.1 后台订阅自动更新：30 分钟扫描一次 + 60 秒首扫 + 防重入
 let cronTimer = null;
+let cronRunning = false;
+async function runDueSubscriptions() {
+  if (cronRunning) return { ok: false, skipped: true, reason: 'running' };
+  cronRunning = true;
+  try {
+    const data = readJSON(SUB_FILE, { items: [] });
+    let changed = false;
+    let ran = 0;
+    const now = Date.now();
+    for (const it of (data.items || [])) {
+      const last = it.last_run ? Date.parse(it.last_run) : 0;
+      const intervalMs = (it.interval_hours || 24) * 3600 * 1000;
+      if (!last || now - last >= intervalMs) {
+        logToInfo('[ext] subscription auto update: ' + (it.name || it.id));
+        await runSubscription(it);
+        changed = true;
+        ran++;
+      }
+    }
+    if (changed) writeJSON(SUB_FILE, data);
+    return { ok: true, ran };
+  } catch (e) {
+    logToInfo('[ext] sub cron error: ' + e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    cronRunning = false;
+  }
+}
 function startCron() {
   if (cronTimer) return;
-  cronTimer = setInterval(async () => {
-    try {
-      const data = readJSON(SUB_FILE, { items: [] });
-      let changed = false;
-      const now = Date.now();
-      for (const it of data.items) {
-        const last = it.last_run ? Date.parse(it.last_run) : 0;
-        const intervalMs = (it.interval_hours || 24) * 3600 * 1000;
-        if (now - last >= intervalMs) {
-          await runSubscription(it);
-          changed = true;
-        }
-      }
-      if (changed) writeJSON(SUB_FILE, data);
-    } catch (e) {
-      logToInfo('[ext] sub cron error: ' + e.message);
-    }
-  }, 60 * 1000);
+  setTimeout(() => runDueSubscriptions(), 60 * 1000).unref?.();
+  cronTimer = setInterval(() => runDueSubscriptions(), 30 * 60 * 1000);
   cronTimer.unref && cronTimer.unref();
+  logToInfo('[ext] subscription auto update scheduler started (30min scan)');
 }
+router.post('/subscriptions/run-due', wrap(async (req, res) => {
+  res.json(await runDueSubscriptions());
+}));
 startCron();
 
 // ============ 流量配额（C6） ============
@@ -253,7 +279,7 @@ function fetchBinary(url, timeoutMs = 60000) {
     let u;
     try { u = new URL(url); } catch (_) { return reject(new Error('URL 错误')); }
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.0' } }, (resp) => {
+    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.1' } }, (resp) => {
       if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
         resp.resume();
         return resolve(fetchBinary(new URL(resp.headers.location, u).toString(), timeoutMs));
@@ -271,7 +297,8 @@ function fetchBinary(url, timeoutMs = 60000) {
 // ============ curl 快速测试（C9） ============
 router.post('/curl-test', wrap(async (req, res) => {
   const target = String(req.body.target || 'https://www.google.com/generate_204');
-  const mode = String(req.body.mode || 'socks'); // socks / http / direct
+  const modeRaw = String(req.body.mode || 'socks');
+  const mode = modeRaw === 'proxy' ? 'socks' : modeRaw; // socks / http / direct; proxy is frontend alias
   if (!/^https?:\/\//i.test(target)) return res.status(400).json({ ok: false, error: 'URL 必须以 http(s) 开头' });
   let proxyArg = '';
   if (mode === 'socks') proxyArg = '--socks5 127.0.0.1:10808';
@@ -279,7 +306,8 @@ router.post('/curl-test', wrap(async (req, res) => {
   exec(`curl -sS -o /dev/null -w "%{http_code} %{time_total}" --max-time 15 ${proxyArg} "${target.replace(/"/g, '')}"`, { timeout: 16000 }, (err, stdout) => {
     if (err) return res.json({ ok: false, error: err.message, output: stdout });
     const [code, time] = String(stdout).trim().split(/\s+/);
-    res.json({ ok: true, http_code: code, time_seconds: parseFloat(time), mode, target });
+    const time_seconds = parseFloat(time);
+    res.json({ ok: true, http_code: code, time_seconds, time_ms: Math.round(time_seconds * 1000), mode, target });
   });
 }));
 
