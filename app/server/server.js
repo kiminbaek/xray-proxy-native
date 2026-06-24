@@ -56,6 +56,7 @@ app.use('/api', require('./routers/history'));           // v1.13.0+ 节点延�
 app.use('/api/auto-select', require('./routers/auto-select'));  // v1.13.0+ 自动选最优
 app.use('/api/notify', require('./routers/notify'));            // v1.16.0+ 通知配置/测试/历史
 app.use('/api/tun', require('./routers/tun'));                  // v1.17.0+ TUN 模式（透明代理）
+app.use('/api/ext', require('./routers/ext'));                  // v1.24.0+ 节点标签 / 订阅 / 配额 / 路由 / Geo
 
 // ====== 静态文件 ======
 app.use(express.static(path.join(__dirname, '..', 'ui')));
