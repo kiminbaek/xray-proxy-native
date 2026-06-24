@@ -136,7 +136,6 @@ router.post('/config', wrap(async (req, res) => {
 
 // 临**时**路**由**管**理**（v1.17.0 v9+ 修 M50：xray 26.6.1 TUN 不自动注入 OS 路由，**需**要**手**动**加**临**时**路**由**让**应**用**自**动**走** TUN**）
 // 用**临**时**路**由**（metric 50 **优**于**原**默**认** 100**），**关**闭** TUN **时**要**记**得**清**理**，**不**然**会**断**网**
-const { execSync } = require('child_process');
 function addTunRoutes(tunName) {
   // 3 条覆盖所有 IPv4（default + 0.0.0.0/1 + 128.0.0.0/1）。iproute2 拒绝 0.0.0.0/0，**用** default + /1 拆**分**
   const cmds = [
@@ -370,7 +369,6 @@ router.post('/restore', wrap(async (req, res) => {
     return res.status(404).json({ ok: false, error: '恢复脚本不存在，请先启用一次 TUN 模式生成备份' });
   }
   try {
-    const { execSync } = require('child_process');
     execSync(`bash "${shPath}"`, { stdio: 'pipe', timeout: 30000 });
     res.json({ ok: true, message: '网络恢复脚本已执行，请检查网络连通性' });
   } catch (e) {
