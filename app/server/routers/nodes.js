@@ -146,7 +146,7 @@ router.post('/reorder', wrap(async (req, res) => {
 router.post('/test-all', wrap(async (req, res) => {
   const cfg = xray.getConfig();
   let targets = (cfg.outbounds || []).filter(o => !['proxy', 'direct', 'block', 'api'].includes(o.tag));
-  if (Array.isArray(req.body && req.body.tags) && req.body.tags.length > 0) {
+  if (Array.isArray(req.body?.tags) && req.body.tags.length > 0) {
     const tagSet = new Set(req.body.tags);
     targets = targets.filter(o => tagSet.has(o.tag));
   }

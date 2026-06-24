@@ -25,6 +25,16 @@ log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
 }
 
+# 同步 fnOS appcenter DB 状态（M99 死锁修复：install 钩子起的进程 fnOS 不认，需应用自己 sync）
+# 实测：桌面图标/打开入口要求 running 时必须 is_stop=true, is_uninstall=true
+sync_appcenter_status() {
+    local app_status="${1:-running}"
+    local is_stop="true"
+    local is_uninstall="true"
+    [ "$app_status" = "running" ] || { is_stop="false"; is_uninstall="false"; }
+    sudo -u postgres psql -d appcenter -c "UPDATE app SET status='${app_status}', is_stop=${is_stop}, is_uninstall=${is_uninstall}, updated_at=now() WHERE app_name='xray-proxy-native';" >/dev/null 2>&1 || true
+}
+
 ensure_dirs() {
     mkdir -p "${TRIM_PKGVAR}/xray" "${XRAY_BIN_DIR}"
 }
@@ -142,6 +152,16 @@ install_deps() {
 
 start_process() {
     ensure_dirs
+
+    # v1.23.3+ 修 M99 root ui 老坑：桌面入口读 /var/apps/<app>/ui/config，不是 target/app/ui/config
+    local app_ui_src="/var/apps/xray-proxy-native/target/app/ui"
+    local app_ui_dst="/var/apps/xray-proxy-native/ui"
+    if [ -d "${app_ui_src}" ]; then
+        rm -rf "${app_ui_dst}" 2>/dev/null || true
+        cp -a "${app_ui_src}" "${app_ui_dst}" 2>/dev/null || true
+        log_msg "root ui synced from ${app_ui_src}"
+    fi
+
     if check_running; then
         log_msg "Already running (pid $(head -n 1 ${PID_FILE}))"
         return 0
@@ -233,6 +253,9 @@ start_process() {
     else
         log_msg "Skip auto-start: ${AUTH_FILE} not found"
     fi
+
+    # v1.23.3+ 同步 fnOS appcenter 状态为 running，避免 UI 显示"启用"死锁
+    sync_appcenter_status running
     return 0
 }
 
@@ -331,6 +354,13 @@ stop_process() {
     # 最后兜底：按用户 xray_proxy + 进程名精确杀（绝不可能误杀 SSH）
     pkill -KILL -u xray_proxy -f "node server.js" 2>/dev/null && log_msg "pkill node fallback killed residual" || true
     pkill -KILL -u xray_proxy -f "xray run -config" 2>/dev/null && log_msg "pkill xray fallback killed residual" || true
+
+    # v1.23.3+ 兜底：按本应用 xray 二进制路径杀 root 启动的残留 xray
+    if [ -x "${XRAY_BIN}" ]; then
+        pkill -TERM -f "${XRAY_BIN} run -config" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "${XRAY_BIN} run -config" 2>/dev/null && log_msg "pkill xray-bin root fallback killed residual" || true
+    fi
     log_msg "Stopped"
 }
 

@@ -1,5 +1,0 @@
-{
-    "defaults": { "run-as": "root" },
-    "username": "xray_proxy",
-    "groupname": "xray_proxy"
-}

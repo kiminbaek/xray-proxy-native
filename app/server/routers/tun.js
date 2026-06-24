@@ -23,6 +23,8 @@ const { logToInfo } = require('../xray/utils');
 const fs = require('fs');
 const path = require('path');
 
+const DATA_DIR = process.env.TRIM_PKGVAR || '/tmp/xray-proxy-native';
+
 // 检测 TUN 设备是否存在（不依赖 ip 命令，sandbox 也能查）
 // /sys/class/net/tun0 是符号链接，存在说明 tun 设备被创建
 function checkTunDevice(name) {
@@ -50,8 +52,8 @@ router.get('/config', wrap(async (req, res) => {
     },
     safety: {
       // 返回备份文件路径（用户手动恢复用）
-      backupScript: path.join(tunConfig.name ? '/vol3/@appdata/xray-proxy-native' : '', 'backup_network.sh'),
-      backupConfig: path.join(tunConfig.name ? '/vol3/@appdata/xray-proxy-native' : '', 'network_backup.conf')
+      backupScript: path.join(DATA_DIR, 'backup_network.sh'),
+      backupConfig: path.join(DATA_DIR, 'network_backup.conf')
     }
   });
 }));
@@ -178,7 +180,7 @@ router.post('/start', wrap(async (req, res) => {
       apply: result,
       reload: reloadResult,
       routes: routeResults,
-      message: 'TUN 模式已启用，所有应用已自动走 TUN 分流（国内直连/国外代理）。如网络异常，执行: sudo bash ' + path.join('/vol3/@appdata/xray-proxy-native', 'backup_network.sh')
+      message: 'TUN 模式已启用，所有应用已自动走 TUN 分流（国内直连/国外代理）。如网络异常，执行: sudo bash ' + path.join(DATA_DIR, 'backup_network.sh')
     });
   } catch (e) {
     logToInfo(`[tun] start failed: ${e.message}`);
@@ -285,7 +287,7 @@ router.get('/diagnostic-package', wrap(async (req, res) => {
   });
   const pkg = {
     app: 'xray-proxy-native',
-    version: '1.20.0',
+    version: process.env.TRIM_APPVER || '1.23.3',
     exportedAt: new Date().toISOString(),
     note: '只读诊断包：不包含 auth token、不包含节点密钥明文、不执行清理/启用操作',
     status: xray.getStatus(),
@@ -321,7 +323,7 @@ router.get('/backup', wrap(async (req, res) => {
       '1. 停用应用：fnOS 应用中心 → xray-proxy-native → 停用',
       '2. 完全卸载：fnOS 应用中心 → xray-proxy-native → 卸载',
       '3. 如仍断网，SSH 登录后执行：',
-      '   sudo bash ' + path.join('/vol3/@appdata/xray-proxy-native', 'backup_network.sh'),
+      '   sudo bash ' + path.join(DATA_DIR, 'backup_network.sh'),
       '4. 验证：ping -c 3 8.8.8.8',
       '',
       '【为什么要做这个】',

@@ -101,10 +101,10 @@ log_msg "Install: generate backup_network.sh"
 cat > "${TRIM_PKGVAR}/backup_network.sh" <<'SHEOF'
 #!/bin/bash
 # v1.17.0+ TUN 模式手动恢复脚本（自动生成）
-# 用法：sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh
+# 用法：sudo bash ${TRIM_PKGVAR}/backup_network.sh
 # 场景：TUN 模式出问题 / 卸载不干净 / 断网 / xray 崩溃残留
 set +e
-CONF="/vol3/@appdata/xray-proxy-native/network_backup.conf"
+CONF="${TRIM_PKGVAR}/network_backup.conf"
 [ -f "${CONF}" ] && source "${CONF}"
 echo "[1/6] 删 TUN 设备..."
 ip link delete tun0 2>/dev/null
@@ -180,5 +180,14 @@ echo "   sudo reboot                                   # 兜底：重启飞牛"
 SHEOF
 chmod +x "${TRIM_PKGVAR}/backup_network.sh"
 log_msg "backup_network.sh generated"
+
+# v1.23.3+ 修 M99 root ui 老坑：桌面入口读 /var/apps/<app>/ui/config，不是 target/app/ui/config
+app_ui_src="/var/apps/xray-proxy-native/target/app/ui"
+app_ui_dst="/var/apps/xray-proxy-native/ui"
+if [ -d "${app_ui_src}" ]; then
+    rm -rf "${app_ui_dst}" 2>/dev/null || true
+    cp -a "${app_ui_src}" "${app_ui_dst}" 2>/dev/null || true
+    log_msg "root ui synced from ${app_ui_src}"
+fi
 
 exit 0

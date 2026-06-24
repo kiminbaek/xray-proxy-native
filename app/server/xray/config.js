@@ -449,7 +449,7 @@ function backupNetworkConfig() {
 # 用法：sudo bash ${shPath}
 # 场景：TUN 模式出问题 / 卸载不干净 / 断网
 set +e  # 不因个别错误退出
-TUN_NAME="$(node -e 'try{const f="/vol3/@appdata/xray-proxy-native/tun.json";const j=require(f);if(/^[a-zA-Z0-9_-]{1,16}$/.test(j.name||""))process.stdout.write(j.name)}catch(e){}' 2>/dev/null)"
+TUN_NAME="$(node -e 'try{const f="${DATA_DIR}/tun.json";const j=require(f);if(/^[a-zA-Z0-9_-]{1,16}$/.test(j.name||""))process.stdout.write(j.name)}catch(e){}' 2>/dev/null)"
 echo "[1/5] 删 TUN 设备和临时路由..."
 for dev in "\${TUN_NAME:-tun0}" tun0 tun1; do
   ip route del default dev "$dev" metric 50 2>/dev/null
@@ -486,7 +486,8 @@ echo "✅ 清理完成"
     logToInfo('Network backup generated:', { conf: confPath, sh: shPath, gw, iface });
     return { ok: true, conf: confPath, sh: shPath, gw, iface, dns };
   } catch (e) {
-    log.error('backupNetworkConfig failed:', e);
+    console.error('backupNetworkConfig failed:', e);
+    logToInfo('[tun] backupNetworkConfig failed: ' + e.message);
     return { ok: false, error: e.message };
   }
 }

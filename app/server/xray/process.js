@@ -21,6 +21,7 @@ const notify = require('../notify');  // v1.16.0+ 通知模块
 
 // ====== 状态 ======
 let xrayProcess = null;
+let xrayStartAt = null;   // xray 实际启动时间戳（用于准确 uptime）
 
 // ====== v1.4.0+ 守护进程状态 ======
 // autoRestartEnabled: 用户开关（默认开启）
@@ -57,19 +58,20 @@ function killExistingXray() {
     }
   } catch (_) {}
 
-  // Step 2: pkill -x xray 兜底（精确匹配 comm name，避坑速查 #1：不用 pkill -f 误杀 SSH）
+  // Step 2: 按本应用 xray 二进制路径精确杀（避免误杀系统其他 xray）
+  const xrayBinPattern = `${DATA_DIR}/xray-bin/xray run`;
   try {
-    execSync("sh -c 'pkill -TERM -x xray 2>/dev/null; true'", { timeout: 3000 });
+    execSync(`sh -c 'pkill -TERM -f "${xrayBinPattern}" 2>/dev/null; true'`, { timeout: 3000 });
   } catch (_) {}
 
-  // Step 3: 同步轮询等所有 xray 退出（最多 3s = 15 * 200ms）
+  // Step 3: 同步轮询等本应用 xray 退出（最多 3s = 15 * 200ms）
   for (let i = 0; i < 15; i++) {
     let stillRunning = false;
     try {
-      execSync("sh -c 'pidof xray >/dev/null 2>&1'", { timeout: 1000, stdio: 'pipe' });
-      stillRunning = true;  // pidof exit 0 = 还有 xray
+      execSync(`sh -c 'pgrep -f "${xrayBinPattern}" >/dev/null 2>&1'`, { timeout: 1000, stdio: 'pipe' });
+      stillRunning = true;  // pgrep exit 0 = 还有本应用 xray
     } catch (_) {
-      stillRunning = false;  // pidof exit 1 = xray 全退
+      stillRunning = false;  // pgrep exit 1 = 本应用 xray 全退
     }
     if (!stillRunning) return;
     try { execSync('sleep 0.2', { timeout: 1000 }); } catch (_) {}  // sleep 200ms
@@ -77,7 +79,7 @@ function killExistingXray() {
 
   // Step 4: 3s 还没退，SIGKILL 强杀
   try {
-    execSync("sh -c 'pkill -KILL -x xray 2>/dev/null; true'", { timeout: 3000 });
+    execSync(`sh -c 'pkill -KILL -f "${xrayBinPattern}" 2>/dev/null; true'`, { timeout: 3000 });
   } catch (_) {}
 }
 
@@ -163,6 +165,7 @@ function startXray(customBinary) {
     }
 
     xrayProcess = proc;
+    xrayStartAt = Date.now();
     let resolved = false;
     let stderrBuf = '';
 
@@ -244,7 +247,7 @@ function startXray(customBinary) {
           // 通知用户 TUN 已自动清理（避免断网）
           notify.send('xray_tun_crashed', {
             title: 'TUN 模式自动清理',
-            message: 'xray 意外退出，已自动清理 TUN 设备 + 路由表 + iptables + 临时路由。\n5 秒后守护会重启 xray，可重新启用 TUN。\n如仍断网：sudo bash /vol3/@appdata/xray-proxy-native/backup_network.sh'
+            message: 'xray 意外退出，已自动清理 TUN 设备 + 路由表 + iptables + 临时路由。\n5 秒后守护会重启 xray，可重新启用 TUN。\n如仍断网：sudo bash ${DATA_DIR}/backup_network.sh'
           }).catch(() => {});
         }
       } catch (e) {
@@ -291,6 +294,7 @@ function stopXray() {
   return new Promise((resolve) => {
     if (!xrayProcess || xrayProcess.exitCode !== null) {
       xrayProcess = null;
+      xrayStartAt = null;
       return resolve({ ok: true, msg: '未在运行' });
     }
 
@@ -310,6 +314,7 @@ function stopXray() {
     proc.on('exit', () => {
       clearTimeout(timer);
       xrayProcess = null;
+      xrayStartAt = null;
       try { fs.unlinkSync(PID_FILE); } catch (_) {}
       resolve({ ok: true });
     });
@@ -356,7 +361,7 @@ function getStatus() {
   return {
     running: pid !== null,
     pid,
-    uptime: pid ? Math.floor(process.uptime()) : 0,
+    uptime: pid && xrayStartAt ? Math.floor((Date.now() - xrayStartAt) / 1000) : 0,
     // v1.7.1+ 暴露 xray 二进制路径给 UI（之前 UI 显示 "未找到"）
     binary: findXray() || null
   };
