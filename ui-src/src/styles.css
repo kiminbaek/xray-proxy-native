@@ -160,3 +160,53 @@ pre,.code,.logConsole pre,.darkCard pre{
 
 /* v1.23.2 sixth pass: explicit toggle rows for enhance settings */
 .toggleField{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:14px;min-height:58px;border:1px solid var(--line);border-radius:6px;background:#fff;padding:10px 12px}.toggleField>span{display:block;min-width:0}.toggleField b{display:block;color:var(--text);font-size:14px;line-height:1.3}.toggleField em{display:block;margin-top:3px;color:var(--muted);font-style:normal;font-size:12px;white-space:normal}.toggleField input[type="checkbox"]{width:18px!important;height:18px!important;margin:0!important;flex:0 0 auto}.enhancePage .formGrid .toggleField{align-self:stretch}.enhancePage .cardBody>.formGrid{align-items:stretch!important}.enhancePage .formGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.enhancePage .formGrid .field input:not([type="checkbox"]){width:100%}
+
+/* v1.23.7: fix cramped labels - title and value were inline, now block with spacing */
+.miniCommand{display:flex!important;flex-direction:column!important;gap:6px!important}
+.miniCommand>span{display:inline-flex!important;align-items:center!important;gap:6px!important;color:var(--muted)!important;font-size:12px!important;font-weight:500}
+.miniCommand>b{display:block!important;font-size:20px!important;line-height:1.25!important;color:var(--text)!important;font-weight:700}
+.info{display:flex!important;flex-direction:column!important;gap:4px!important}
+.info>b{display:block!important;font-size:14px!important;font-weight:700!important;color:var(--text)!important}
+.info>span{display:block!important;color:var(--muted)!important;font-size:13px!important;line-height:1.5!important}
+.actionMatrix button{display:grid!important;grid-template-columns:auto 1fr!important;grid-template-rows:auto auto!important;column-gap:10px!important;row-gap:2px!important;align-items:center!important;text-align:left!important;padding:12px 14px!important}
+.actionMatrix button>svg{grid-row:1 / span 2!important;grid-column:1!important;align-self:center!important}
+.actionMatrix button>b{grid-column:2!important;grid-row:1!important;display:block!important;font-size:14px!important;font-weight:700!important;color:var(--text)!important}
+.actionMatrix button>span{grid-column:2!important;grid-row:2!important;display:block!important;color:var(--muted)!important;font-size:12px!important}
+.topology .topNode{display:flex!important;flex-direction:column!important;gap:4px!important}
+.topology .topNode b{display:block!important;font-size:14px!important}
+.topology .topNode span,.topology .topNode strong{display:block!important;color:var(--muted)!important;font-size:12px!important;font-weight:500}
+.metric{display:flex!important;flex-direction:column!important;gap:4px!important}
+.metric>span{display:block!important;color:var(--muted)!important;font-size:12px!important}
+.metric>strong{display:block!important;font-size:18px!important;line-height:1.25!important;color:var(--text)!important;font-weight:700}
+.metric>em{display:block!important;color:var(--muted)!important;font-size:12px!important;font-style:normal!important;margin-top:2px}
+.modeTiles>div,.modeTiles>button{display:flex!important;flex-direction:column!important;gap:4px!important;align-items:flex-start!important}
+.modeTiles>div>b,.modeTiles>button>b{font-size:14px!important;font-weight:700}
+.modeTiles>div>strong,.modeTiles>button>strong{font-size:18px!important;font-weight:700}
+.modeTiles>div>span,.modeTiles>button>span{color:var(--muted)!important;font-size:12px!important}
+/* sub-line under sectionHero eyebrow should be separate from h2 */
+.sectionHero>div>span,.eyebrow{display:block!important;font-size:12px!important;color:var(--muted)!important;letter-spacing:.5px!important;margin-bottom:2px!important;text-transform:uppercase}
+
+/* compact window: <1024px sidebar hides, all grids 1col */
+@media(max-width:1024px){
+  .appShell{grid-template-columns:1fr!important}
+  .side{display:none!important}
+  .mobileNav{display:flex!important;position:fixed!important;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid var(--line);padding:6px 8px;gap:2px;overflow-x:auto}
+  .mobileNav button{flex:1 1 auto;min-width:0;border:0;background:transparent;color:#475569;border-radius:6px;padding:7px 6px;font-weight:600;font-size:12px;white-space:nowrap}
+  .mobileNav button.active{background:var(--blueBg);color:var(--blue)}
+  .page{padding:16px 16px 80px!important}
+  .dashGrid,.dashGrid.proDash,.twoCol,.networkPage,.trafficPage,.enhancePage,.diagnosePage,.logsPage,.backupPage,.settingsPage,.nodesPage{grid-template-columns:1fr!important;gap:14px!important}
+  .commandDeck,.dashGrid.proDash .commandDeck{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}
+  .metrics,.dashGrid.proDash .metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .proInsights,.dashGrid.proDash .proInsights{grid-template-columns:1fr!important}
+  .topology,.dashGrid.proDash .topology{grid-template-columns:1fr!important}
+  .topology>span{display:none!important}
+  .actionMatrix{grid-template-columns:1fr!important}
+  .top h1{font-size:18px!important}
+  .sectionHero h2{font-size:20px!important}
+  .topActions{flex-wrap:wrap!important;gap:6px!important}
+}
+@media(max-width:600px){
+  .commandDeck,.metrics{grid-template-columns:1fr!important}
+  .heroBtns{flex-direction:column!important;align-items:stretch!important}
+  .heroBtns .btn{width:100%}
+}
