@@ -1,6 +1,6 @@
 {
   "name": "xray-proxy-native",
-  "version": "1.24.3",
+  "version": "1.24.4",
   "private": true,
   "dependencies": {
     "express": "^4.21.0",

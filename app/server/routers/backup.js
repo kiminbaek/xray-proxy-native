@@ -32,14 +32,13 @@ const KEY_LEN = 32;                  // AES-256 密钥长度
 const CIPHER = 'aes-256-gcm';        // 认证加密（防篡改）
 
 // ====== 导出 ======
-// query 参数：
+// body 参数：
 //   password=xxx   启用加密（PBKDF2-AES-256-GCM）
 //   compress=true  启用 gzip 压缩
-// 不传任何参数 = v1.9.0 旧格式（明文 JSON，向后兼容）
-router.get('/export', (req, res) => {
+router.post('/export', (req, res) => {
   try {
-    const password = req.query.password ? String(req.query.password) : null;
-    const compress = req.query.compress === 'true' || req.query.compress === '1';
+    const password = req.body.password ? String(req.body.password) : null;
+    const compress = req.body.compress === true || req.body.compress === 'true' || req.body.compress === '1';
     const plain = {
       version: '1.13.0',
       exportedAt: new Date().toISOString(),

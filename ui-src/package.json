@@ -1,1 +1,1 @@
-{"version":"1.24.3","scripts":{"build":"vite build","dev":"vite --host 0.0.0.0"},"dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest","lucide-react":"latest"},"devDependencies":{}}
+{"version":"1.24.4","scripts":{"build":"vite build","dev":"vite --host 0.0.0.0"},"dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest","lucide-react":"latest"},"devDependencies":{}}
