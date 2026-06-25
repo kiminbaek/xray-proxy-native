@@ -12,6 +12,7 @@ const xray = require('../xray');
 const { logToInfo } = require('../xray/utils');
 
 const DATA_DIR = process.env.TRIM_PKGVAR || '/tmp/xray-proxy-native';
+const APP_VERSION = '1.24.5';
 const TAGS_FILE = path.join(DATA_DIR, 'node_tags.json');
 const SUB_FILE = path.join(DATA_DIR, 'subscriptions.json');
 const QUOTA_FILE = path.join(DATA_DIR, 'quota.json');
@@ -102,7 +103,7 @@ function fetchText(url, timeoutMs = 20000) {
     let u;
     try { u = new URL(url); } catch (_) { return reject(new Error('URL 错误')); }
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.1' } }, (resp) => {
+    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/' + APP_VERSION } }, (resp) => {
       if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
         resp.resume();
         return resolve(fetchText(new URL(resp.headers.location, u).toString(), timeoutMs));
@@ -242,18 +243,18 @@ router.post('/routing', wrap(async (req, res) => {
 
 // ============ GeoIP/GeoSite 一键更新（C7） ============
 router.get('/geo/status', wrap(async (req, res) => {
-  const files = ['geoip.dat', 'geosite.dat'];
+  const files = { geoip: 'geoip.dat', geosite: 'geosite.dat' };
   const result = {};
-  for (const f of files) {
-    const p = path.join(GEO_DIR, f);
+  for (const [key, fname] of Object.entries(files)) {
+    const p = path.join(GEO_DIR, fname);
     try {
       const st = fs.statSync(p);
-      result[f] = { exists: true, size: st.size, mtime: st.mtime };
+      result[key] = { exists: true, size_kb: Math.round(st.size / 1024), size_mb: (st.size / 1048576).toFixed(1), mtime: st.mtime };
     } catch (_) {
-      result[f] = { exists: false };
+      result[key] = { exists: false };
     }
   }
-  res.json({ ok: true, dir: GEO_DIR, files: result });
+  res.json({ ok: true, dir: GEO_DIR, ...result });
 }));
 router.post('/geo/update', wrap(async (req, res) => {
   const urls = {
@@ -261,6 +262,7 @@ router.post('/geo/update', wrap(async (req, res) => {
     'geosite.dat': 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat'
   };
   const result = {};
+  let allOk = true;
   for (const [name, url] of Object.entries(urls)) {
     try {
       const buf = await fetchBinary(url);
@@ -269,9 +271,20 @@ router.post('/geo/update', wrap(async (req, res) => {
       result[name] = { ok: true, size: buf.length };
     } catch (e) {
       result[name] = { ok: false, error: e.message };
+      allOk = false;
     }
   }
-  res.json({ ok: true, result, hint: '更新完成，重启 xray 后生效' });
+  // 更新成功后自动重启 xray 使 Geo 数据生效（F1）
+  let restartInfo = '';
+  if (allOk) {
+    try {
+      await xray.restartXray();
+      restartInfo = '，xray 已自动重启';
+    } catch (e) {
+      restartInfo = '（xray 重启失败：' + e.message + '，请手动重启）';
+    }
+  }
+  res.json({ ok: true, result, hint: '更新完成' + restartInfo });
 }));
 
 function fetchBinary(url, timeoutMs = 60000) {
@@ -279,7 +292,7 @@ function fetchBinary(url, timeoutMs = 60000) {
     let u;
     try { u = new URL(url); } catch (_) { return reject(new Error('URL 错误')); }
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/1.24.1' } }, (resp) => {
+    const req = lib.get(u, { timeout: timeoutMs, headers: { 'User-Agent': 'xray-proxy-native/' + APP_VERSION } }, (resp) => {
       if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
         resp.resume();
         return resolve(fetchBinary(new URL(resp.headers.location, u).toString(), timeoutMs));
